@@ -1,0 +1,7 @@
+#!/bin/bash
+# siempl pre-commit: ruff + quality ratchet (~5s). Bypass only with a written reason: git commit --no-verify
+cd "$(git rev-parse --show-toplevel)" || exit 1
+echo "[pre-commit] ruff"
+uvx ruff check siempl tests scripts || { echo "[pre-commit] BLOCKED: ruff failed"; exit 1; }
+echo "[pre-commit] quality ratchet"
+python3 scripts/check_quality.py || { echo "[pre-commit] BLOCKED: ratchet failed"; exit 1; }

@@ -1,0 +1,204 @@
+<!-- Rule detail/edit page -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <a href="/rules" class="link back-link">← Back to Rules</a>
+  <h1>{{ rule.name }}</h1>
+  <div class="alert-meta">
+    <span class="badge badge-{{ severity_class.get(rule.severity, 'sev-info') }}">{{ rule.severity }}</span>
+    <span class="pill">{{ fmt_label }}</span>
+    <span class="pill" title="origin">{{ rule.origin or 'manual' }}</span>
+    {% if rule.enabled %}
+    <span class="pill pill-status-new">enabled</span>
+    {% else %}
+    <span class="pill pill-status-closed">disabled</span>
+    {% endif %}
+    <span class="muted">v{{ rule.version }}</span>
+  </div>
+</div>
+
+<div class="detail-grid">
+  <div class="detail-main">
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Executable query ({{ 'SQL' if query_lang == 'sql' else 'KQL' }})</h2>
+        <button class="btn btn-sm btn-primary" onclick="testRun()">▶ Test Run</button>
+      </div>
+      <div class="panel-body">
+        <pre class="kql-preview">{{ rule.query }}</pre>
+        {% if rule.query_sql %}
+        <details style="margin-top:8px"><summary>Generated SQL</summary>
+          <pre class="kql-preview">{{ rule.query_sql }}</pre>
+        </details>
+        {% endif %}
+        {% if rule.source_content %}
+        <details style="margin-top:8px"><summary>Original source ({{ rule.source_ref or 'pasted' }})</summary>
+          <pre class="kql-preview" style="white-space:pre-wrap">{{ rule.source_content }}</pre>
+        </details>
+        {% endif %}
+        <div class="btn-row" style="margin-top:8px">
+          <a href="/rules/{{ rule.rule_id }}/edit" class="btn btn-primary">Edit</a>
+          <button class="btn" onclick="cloneRule()">Clone</button>
+          <button class="btn" onclick="runNow()">Run Now</button>
+        </div>
+        <div id="test-results" style="display:none; margin-top:12px">
+          <div class="results-header">
+            <span id="test-summary"></span>
+            <button class="btn btn-sm" onclick="document.getElementById('test-results').style.display='none'">×</button>
+          </div>
+          <div class="table-scroll"><table class="table table-sm" id="test-table"></table></div>
+        </div>
+        <div id="test-error" class="query-error" style="display:none"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Details</h2></div>
+      <div class="panel-body">
+        <dl class="dl-grid">
+          <dt>Frequency</dt><dd>every {{ rule.frequency_minutes }} min, look back {{ rule.lookback_minutes }} min</dd>
+          <dt>Threshold</dt><dd>≥ {{ rule.threshold }} rows to fire</dd>
+          <dt>Tables</dt><dd>{{ (rule.tables or []) | join(', ') or '—' }}</dd>
+          <dt>Description</dt><dd>{{ rule.description or '—' }}</dd>
+          <dt>Triage Steps</dt><dd style="white-space:pre-wrap">{{ rule.triage_steps or '—' }}</dd>
+          <dt>MITRE</dt><dd>{% if rule.mitre_techniques %}{{ rule.mitre_techniques | join(', ') }}{% else %}—{% endif %}</dd>
+          <dt>Source Ref</dt><dd>{{ rule.source_ref or '—' }}</dd>
+          <dt>Created</dt><dd>{{ rule.created_at }}</dd>
+          <dt>Updated</dt><dd>{{ rule.updated_at }}</dd>
+          <dt>Expires</dt><dd>{{ rule.expires_at or 'never' }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    {% if tuning_history %}
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Version History</h2></div>
+      <div class="panel-body">
+        <div class="timeline">
+          {% for h in tuning_history %}
+          <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-content">
+              <span class="muted">{{ h.ts }}</span>
+              <span class="pill">v{{ loop.index }}</span>
+              Changes: {{ h.changes.keys() | list | join(', ') }}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Alerts from this rule ({{ alerts_panel.total }})</h2>
+        <a href="{{ alerts_panel.view_all }}" class="btn btn-sm">View all</a>
+      </div>
+      <div class="panel-body">
+        <div class="rule-alerts-chart">{{ alerts_panel.svg }}</div>
+        {% if alerts_panel.alerts %}
+        <div class="table-scroll">
+        <table class="table table-sm">
+          <thead><tr><th>#</th><th>Severity</th><th>Title</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>
+          {% for a in alerts_panel.alerts %}
+          <tr><td><a href="/alerts/{{ a.alert_id }}" class="link">#{{ a.alert_number }}</a></td>
+          <td><span class="badge badge-{{ severity_class.get(a.severity, 'sev-info') }}">{{ a.severity }}</span></td>
+          <td>{{ a.title }}</td>
+          <td><span class="pill pill-status-{{ a.status }}">{{ a.status }}</span></td>
+          <td class="nowrap muted">{{ a.created_at }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="muted">No alerts from this rule yet.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="detail-sidebar">
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Actions</h2></div>
+      <div class="panel-body">
+        <div class="action-grid">
+          <label class="switch-row">
+            <span>Enabled</span>
+            <label class="switch">
+              <input type="checkbox" {% if rule.enabled %}checked{% endif %} onchange="toggleRule()">
+              <span class="switch-slider"></span>
+            </label>
+          </label>
+          <button class="btn btn-sm" onclick="testRun()">Test Run</button>
+          <button class="btn btn-sm" onclick="runNow()">Run Now</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tuning agent panel (scope rule, target = this rule). -->
+<div id="agent-panel" data-agent-scope="rule" data-agent-target="{{ rule.rule_id }}"></div>
+<script src="/static/agent_panel.js"></script>
+<script>AgentPanel.mountAll(document);</script>
+
+<script>
+async function toggleRule() {
+  try {
+    const state = document.querySelector('input[type=checkbox]').checked;
+    const url = state ? '/api/rules/{{ rule.rule_id }}/enable' : '/api/rules/{{ rule.rule_id }}/delete';
+    const r = await fetch(url, {method:'POST'});
+    if ((await r.json()).ok) location.reload();
+  } catch(e) { alert('Error'); }
+}
+
+async function testRun() {
+  document.getElementById('test-error').style.display = 'none';
+  document.getElementById('test-results').style.display = 'none';
+  document.getElementById('test-summary').textContent = 'Running…';
+  document.getElementById('test-results').style.display = 'block';
+  try {
+    const r = await fetch('/api/rules/{{ rule.rule_id }}/test-run', {method:'POST'});
+    const data = await r.json();
+    if (data.error) {
+      document.getElementById('test-results').style.display = 'none';
+      document.getElementById('test-error').textContent = data.error;
+      document.getElementById('test-error').style.display = 'block';
+      return;
+    }
+    document.getElementById('test-summary').textContent = data.row_count + ' rows, ' + data.elapsed_ms.toFixed(0) + 'ms' + (data.truncated ? ' (truncated)' : '');
+    const table = document.getElementById('test-table');
+    let html = '<thead><tr>' + data.columns.map(c => '<th>' + c + '</th>').join('') + '</tr></thead><tbody>';
+    if (data.rows.length === 0) html += '<tr><td colspan="' + data.columns.length + '" class="muted">No rows</td></tr>';
+    else html += data.rows.map(row => '<tr>' + row.map(cell => '<td>' + (cell ?? '') + '</td>').join('') + '</tr>').join('');
+    html += '</tbody>';
+    table.innerHTML = html;
+  } catch(e) {
+    document.getElementById('test-error').textContent = 'Error: ' + e.message;
+    document.getElementById('test-error').style.display = 'block';
+    document.getElementById('test-results').style.display = 'none';
+  }
+}
+
+async function cloneRule() {
+  if (!confirm('Clone this rule?')) return;
+  try {
+    const r = await fetch('/api/rules/{{ rule.rule_id }}/clone', {method:'POST'});
+    const data = await r.json();
+    if (data.ok) location.href = '/rules/' + data.rule_id;
+    else alert('Failed: ' + (data.error||''));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function runNow() {
+  if (!confirm('Run this rule now?')) return;
+  try {
+    const r = await fetch('/api/rules/{{ rule.rule_id }}/run-now', {method:'POST'});
+    const data = await r.json();
+    if (data.ok) { alert('Rule run: ' + data.count + ' alerts created'); location.reload(); }
+    else alert('Failed: ' + (data.error||''));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+</script>
+{% endblock %}

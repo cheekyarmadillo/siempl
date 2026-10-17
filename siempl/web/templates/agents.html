@@ -1,0 +1,355 @@
+<!-- Agents page: card grid per agent, run history, recommendations, AI panel, policy matrix -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Agents</h1>
+  <p class="page-subtitle">Configure, run, and review agentic automation</p>
+</div>
+
+<!-- Needs your attention: filled by static/attention.js from GET /api/agent-attention -->
+<div class="panel attn-queue" id="attention-queue" style="margin-bottom:16px">
+  <div class="panel-header"><h2 class="panel-title">Needs your attention</h2></div>
+  <div class="panel-body" id="attention-queue-list"><p class="muted">Loading...</p></div>
+</div>
+
+<!-- AI Panel -->
+<div class="panel">
+  <div class="panel-header" style="justify-content:space-between;align-items:center">
+    <h2 class="panel-title">AI Engine</h2>
+    <label class="switch">
+      <input type="checkbox" {% if ai_enabled %}checked{% endif %}
+             onchange="confirmAI(this)" id="ai-switch" aria-label="Toggle AI">
+      <span class="switch-slider"></span>
+    </label>
+  </div>
+  <div class="panel-body">
+    <div class="metric-row">
+      <div class="metric">
+        <div class="metric-value">{{ "%.4f"|format(usage_today.usd) }}</div>
+        <div class="metric-label">USD Today</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ usage_today.tokens }}</div>
+        <div class="metric-label">Tokens Today</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ "%.2f"|format(ai_total_usd_budget) }}</div>
+        <div class="metric-label">Total Budget</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ key_status }}</div>
+        <div class="metric-label">Key Status</div>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-danger" onclick="triggerKillSwitch()">KILL SWITCH</button>
+    </div>
+    <p class="muted" style="margin-top:8px">AI is OFF by default. Dry-run is the default for agent side effects. Use the kill switch to disable AI + scheduling immediately.</p>
+  </div>
+</div>
+
+<!-- Agent Cards -->
+{% if cards %}
+<div class="grid" style="margin-top:16px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
+{% for card in cards %}
+  <div class="panel card">
+    <div class="panel-header" style="align-items:center;gap:8px">
+      <span style="font-size:24px">{{ card.icon }}</span>
+      <div style="flex:1">
+        <h3 class="panel-title" style="margin:0">{{ card.title }}</h3>
+        <span class="pill pill-status-{{ 'new' if card.enabled else 'closed' }}">{{ 'ON' if card.enabled else 'OFF' }}</span>
+        {% if card.model_override %}<span class="pill pill-status-info">{{ card.model_override }}</span>{% endif %}
+      </div>
+      <a class="btn btn-sm" href="/agents/{{ card.name }}">Details →</a>
+    </div>
+    <div class="panel-body">
+      <p class="muted" style="font-size:13px">{{ card.description }}</p>
+      <div class="card-meta">
+        {% if card.last_run %}
+          <span>Last run: <strong>{{ card.last_run.status }}</strong></span>
+          <span class="muted">{{ card.last_run.started_at[:19] if card.last_run.started_at else '—' }}</span>
+          {% if card.last_run.cost_usd %}<span class="muted">${{ "%.4f"|format(card.last_run.cost_usd) }}</span>{% endif %}
+        {% else %}
+          <span class="muted">Never run</span>
+        {% endif %}
+        {% if card.next_scheduled %}<span class="muted">· {{ card.next_scheduled }}</span>{% endif %}
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <!-- Per-agent run form trigger -->
+        <button class="btn btn-sm btn-primary" onclick="showRunForm('{{ card.name }}')">▶ Run</button>
+        <button class="btn btn-sm" onclick="toggleAgent('{{ card.name }}')">{{ 'Disable' if card.enabled else 'Enable' }}</button>
+      </div>
+    </div>
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+<!-- Run Form Modal -->
+<div id="run-form-modal" class="sheet-overlay" style="display:none">
+  <div class="sheet" style="max-width:520px">
+    <h3 id="run-form-title">Run Agent</h3>
+    <div id="run-form-body"></div>
+    <div id="run-form-result" style="margin-top:12px"></div>
+    <div class="sheet-actions">
+      <button class="btn" onclick="document.getElementById('run-form-modal').style.display='none'; document.getElementById('run-form-result').innerHTML=''">Close</button>
+      <button class="btn btn-primary" onclick="submitRunForm()">Run Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Agent Runs -->
+<div class="panel" style="margin-top:16px">
+  <div class="panel-header"><h2 class="panel-title">Run History</h2></div>
+  <div class="panel-body">
+    {% if runs %}
+    <div class="table-scroll">
+    <table class="table table-sm">
+      <thead><tr><th>When</th><th>Agent</th><th>Dry</th><th>Status</th><th>Summary</th><th>Cost</th><th>Tokens</th></tr></thead>
+      <tbody>
+      {% for run in runs %}
+      <tr>
+        <td class="nowrap">{{ run.started_at[:19] if run.started_at else '—' }}</td>
+        <td><span class="pill">{{ run.agent }}</span></td>
+        <td>{% if run.dry_run %}🛡️{% else %}—{% endif %}</td>
+        <td><span class="pill pill-status-{{ run.status }}">{{ run.status }}</span></td>
+        <td class="muted">{{ run.summary | truncate(80) or '—' }}</td>
+        <td>{% if run.cost_usd %}${{ "%.4f"|format(run.cost_usd) }}{% else %}—{% endif %}</td>
+        <td>{{ run.tokens_in | default(0) }} / {{ run.tokens_out | default(0) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No agent runs yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Recommendations -->
+<div class="panel" style="margin-top:16px">
+  <div class="panel-header"><h2 class="panel-title">Open Recommendations</h2></div>
+  <div class="panel-body">
+    {% if recs %}
+    <div class="table-scroll">
+    <table class="table table-sm">
+      <thead><tr><th>Agent</th><th>Kind</th><th>Title</th><th>Rationale</th><th></th></tr></thead>
+      <tbody>
+      {% for rec in recs %}
+      <tr>
+        <td><span class="pill">{{ rec.agent }}</span></td>
+        <td><span class="pill">{{ rec.kind }}</span></td>
+        <td><strong>{{ rec.title }}</strong></td>
+        <td class="muted">{{ rec.rationale | truncate(80) }}</td>
+        <td>
+          <button class="btn btn-sm btn-primary" onclick="recApply('{{ rec.rec_id }}')">Approve</button>
+          <button class="btn btn-sm" onclick="recReject('{{ rec.rec_id }}')">Reject</button>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No open recommendations.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Policy Matrix -->
+<div class="panel" style="margin-top:16px">
+  <div class="panel-header"><h2 class="panel-title">Agent Policy Matrix</h2></div>
+  <div class="panel-body">
+    <p class="muted">Most specific scope wins: rule &gt; severity &gt; global. Default for triage is <code>recommend</code>.</p>
+    {% if policy_rows %}
+    <div class="table-scroll">
+    <table class="table table-sm">
+      <thead><tr><th>Agent</th><th>Scope</th><th>Value</th><th>Mode</th><th>Close</th><th>Escalate</th><th>Remediate</th><th>Temp Rules</th></tr></thead>
+      <tbody>
+      {% for p in policy_rows %}
+      <tr>
+        <td><code>{{ p.agent }}</code></td>
+        <td><span class="pill">{{ p.scope }}</span></td>
+        <td><code>{{ p.scope_value }}</code></td>
+        <td>
+          <select class="select select-sm" onchange="updatePolicy('{{ p.agent }}', '{{ p.scope }}', '{{ p.scope_value }}', this.value)">
+            {% for m in modes %}<option value="{{ m }}" {% if p.mode == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+          </select>
+        </td>
+        <td>{% if p.can_close %}✓{% else %}—{% endif %}</td>
+        <td>{% if p.can_escalate %}✓{% else %}—{% endif %}</td>
+        <td>{% if p.can_remediate %}✓{% else %}—{% endif %}</td>
+        <td>{% if p.can_create_temp_rules %}✓{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No custom policy rows; default is <code>recommend</code> with close+escalate enabled.</p>
+    {% endif %}
+    <form id="policy-add" style="margin-top:12px">
+      <div class="form-grid">
+        <label class="form-label">Agent
+          <select class="select" id="pol-agent">{% for a in cards %}<option value="{{ a.name }}">{{ a.title }}</option>{% endfor %}</select>
+        </label>
+        <label class="form-label">Scope
+          <select class="select" id="pol-scope"><option value="global">global</option><option value="severity">severity</option><option value="rule">rule</option></select>
+        </label>
+        <label class="form-label">Value
+          <input type="text" class="input" id="pol-value" value="*" placeholder="* or severity/rule_id">
+        </label>
+        <label class="form-label">Mode
+          <select class="select" id="pol-mode">{% for m in modes %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select>
+        </label>
+      </div>
+      <button type="button" class="btn btn-primary" style="margin-top:8px" onclick="addPolicy()">Add / Update Policy</button>
+    </form>
+  </div>
+</div>
+
+<script>
+const AGENT_RUN_FORMS = {
+  triage: `
+    <label class="form-label">Alert
+      <select class="select" id="run-param-alert_id"><option value="">— Triage all new alerts —</option>{% for a in open_alerts %}<option value="{{ a.alert_id }}">{{ a.severity }}: {{ a.title | truncate(60) }} ({{ a.alert_id[:8] }})</option>{% endfor %}</select>
+    </label>
+    <label class="form-label">Limit (if triaging all)
+      <input type="number" class="input" id="run-param-limit" value="5" min="1" max="20">
+    </label>
+  `,
+  onboarding: `
+    <label class="form-label">Source ID
+      <input type="text" class="input" id="run-param-source_id" placeholder="source_...">
+    </label>
+    <label class="form-label">Sample lines (optional, paste JSON array)
+      <textarea class="input" id="run-param-samples" rows="3" placeholder='["line1", "line2"]'></textarea>
+    </label>
+  `,
+  optimizer: `
+    <label class="form-label">Window (days)
+      <input type="number" class="input" id="run-param-window_days" value="7" min="1" max="90">
+    </label>
+  `,
+  discovery: `
+    <label class="form-label">Mode
+      <select class="select" id="run-param-mode">
+        <option value="validate_sources">Validate sources</option>
+        <option value="import_web">Import web rules</option>
+        <option value="generate">Generate baseline rules</option>
+      </select>
+    </label>
+  `,
+  tuning: `
+    <label class="form-label">Rule ID (optional)
+      <input type="text" class="input" id="run-param-rule_ids" placeholder="rule_... (leave blank for all)">
+    </label>
+    <label class="form-label">Window (days)
+      <input type="number" class="input" id="run-param-window_days" value="30" min="1" max="90">
+    </label>
+  `,
+  log_alert: `
+    <label class="form-label">Table
+      <input type="text" class="input" id="run-param-table" placeholder="Syslog" value="Syslog">
+    </label>
+    <label class="form-label">Max rows (hard cap 200)
+      <input type="number" class="input" id="run-param-limit" value="50" min="1" max="200">
+    </label>
+  `,
+  remediation: `<p class="muted">Remediation is a stub. No parameters needed.</p>`
+};
+
+let currentRunAgent = null;
+
+function showRunForm(name) {
+  currentRunAgent = name;
+  document.getElementById('run-form-title').textContent = 'Run: ' + name;
+  document.getElementById('run-form-body').innerHTML = AGENT_RUN_FORMS[name] || '<p class="muted">No parameters.</p>';
+  document.getElementById('run-form-result').innerHTML = '';
+  document.getElementById('run-form-modal').style.display = 'flex';
+}
+
+async function submitRunForm() {
+  const body = {agent: currentRunAgent};
+  // Collect params by id prefix
+  document.querySelectorAll('[id^="run-param-"]').forEach(el => {
+    const key = el.id.replace('run-param-', '');
+    let val = el.value;
+    if (el.type === 'number') val = parseInt(val);
+    if (key === 'rule_ids' && val) val = [val];
+    if (key === 'samples' && val) { try { val = JSON.parse(val); } catch(e) {} }
+    if (val !== '' && val !== null) body[key] = val;
+  });
+  const r = await fetch('/api/agents/' + currentRunAgent + '/run', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  const data = await r.json();
+  const res = document.getElementById('run-form-result');
+  if (data.ok) {
+    res.innerHTML = '<div class="pill pill-status-new">OK</div> <strong>' + (data.status || '') + '</strong> ' + (data.summary || '') + (data.run_id ? ' <a href="#" class="btn btn-sm">Run ' + data.run_id.slice(0,8) + '</a>' : '');
+  } else {
+    res.innerHTML = '<div class="pill pill-status-critical">Error</div> ' + (data.error || 'unknown');
+  }
+}
+
+async function toggleAgent(name) {
+  try {
+    const r = await fetch('/api/agents/' + name + '/toggle', {method:'POST'});
+    if ((await r.json()).ok) location.reload();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function recApply(id) {
+  try { const r=await fetch('/api/recommendations/'+id+'/apply',{method:'POST'}); if((await r.json()).ok) location.reload(); }
+  catch(e){ alert('Error: '+e.message); }
+}
+async function recReject(id) {
+  try { const r=await fetch('/api/recommendations/'+id+'/reject',{method:'POST'}); if((await r.json()).ok) location.reload(); }
+  catch(e){ alert('Error: '+e.message); }
+}
+async function updatePolicy(agent, scope, scopeValue, mode) {
+  try {
+    const r = await fetch('/api/settings/policy', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({agent, scope, scope_value: scopeValue, mode})
+    });
+    if ((await r.json()).ok) {/* silent */} else alert('Failed');
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function addPolicy() {
+  const agent = document.getElementById('pol-agent').value;
+  const scope = document.getElementById('pol-scope').value;
+  const value = document.getElementById('pol-value').value;
+  const mode = document.getElementById('pol-mode').value;
+  updatePolicy(agent, scope, value, mode).then(() => location.reload());
+}
+function confirmAI(el) {
+  if (!el.checked) { saveSetting('ai_enabled', false); return; }
+  if (confirm('Enable AI? This permits LLM calls via OpenRouter and costs money.')) {
+    saveSetting('ai_enabled', true); el.checked = true;
+  } else { el.checked = false; }
+}
+async function saveSetting(key, value) {
+  try {
+    const r = await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({[key]:value})});
+    if (!(await r.json()).ok) alert('Failed to save ' + key);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function triggerKillSwitch() {
+  if (!confirm('KILL SWITCH: Disable AI and agent scheduling immediately?')) return;
+  try {
+    const r = await fetch('/api/settings/kill-switch', {method:'POST'});
+    const data = await r.json();
+    if (data.ok) { alert('Kill switch activated. AI and scheduling disabled.'); location.reload(); }
+    else alert('Error: ' + (data.error||'unknown'));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+</script>
+<style>
+.card-meta { display:flex; gap:8px; font-size:12px; margin-top:8px; }
+.card { transition:transform .1s; }
+.card:hover { transform:translateY(-1px); }
+</style>
+{% endblock %}

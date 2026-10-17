@@ -1,0 +1,21 @@
+import tempfile
+from siempl.db import Database
+from siempl.kql import run_kql
+db=Database(tempfile.mkdtemp()+'/t.duckdb')
+db.insert_events('AuthEvents',[{'UserName':'bob','SrcIp':'1.2.3.4','EventResult':'failure'}]*3+[{'UserName':'bob','SrcIp':'1.2.3.4','EventResult':'success'},{'UserName':'al','SrcIp':'5.6.7.8','EventResult':'success'}])
+qs=["let a = AuthEvents | where EventResult=='failure'; let b = AuthEvents | where EventResult=='success'; a | join kind=inner b on SrcIp | summarize n=count() by SrcIp",
+"let a = AuthEvents | where EventResult=='failure' | summarize f=count() by SrcIp, UserName; AuthEvents | where EventResult=='success' | join kind=inner a on SrcIp, UserName | project SrcIp, UserName, f",
+"AuthEvents | where UserName contains 'BO' and UserName !startswith 'z' | distinct UserName",
+"AuthEvents | where UserName =~ 'BOB' | count",
+"AuthEvents | summarize d=dcount(UserName), s=make_set(EventResult), c=countif(EventResult=='failure') by SrcIp",
+"AuthEvents | extend k = iff(EventResult=='failure','bad','ok') | summarize count() by k",
+"AuthEvents | where EventResult == 'failure' | union (AuthEvents | where EventResult == 'success') | count",
+"AuthEvents | summarize arg_max(TimeGenerated, UserName) by SrcIp",
+"AuthEvents | top 2 by TimeGenerated desc | project UserName",
+"AuthEvents | where TimeGenerated between (ago(1h) .. now()) | count",
+"NoSuch | take 1",
+]
+for q in qs:
+    try:
+        r=run_kql(db,q); print('OK',r.rows[:3])
+    except Exception as e: print('ERR',q[:70],'::',str(e)[:170].replace(chr(10),' '))

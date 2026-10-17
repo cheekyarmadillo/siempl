@@ -1,0 +1,165 @@
+<!-- Agent detail page: status, run history, recommendations, model override -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ meta.icon }} {{ meta.title }}</h1>
+  <p class="page-subtitle">{{ meta.description }}</p>
+</div>
+
+<!-- Status + controls -->
+<div class="panel">
+  <div class="panel-header" style="justify-content:space-between;align-items:center">
+    <h2 class="panel-title">Status</h2>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="runAgentNow('{{ agent_name }}', true)">▶ Dry Run</button>
+      <button class="btn" onclick="runAgentNow('{{ agent_name }}', false)">▶ Real Run</button>
+      <button class="btn" onclick="toggleAgent('{{ agent_name }}')">{{ 'Disable' if enabled else 'Enable' }}</button>
+    </div>
+  </div>
+  <div class="panel-body">
+    <dl class="dl-grid">
+      <dt>Enabled</dt><dd><span class="pill pill-status-{{ 'new' if enabled else 'closed' }}">{{ 'ON' if enabled else 'OFF' }}</span></dd>
+      <dt>Dry Run</dt><dd>{{ '🛡️ Yes' if agents_dry_run else 'No' }}</dd>
+      {% if last_run %}
+        <dt>Last Run</dt><dd>{{ last_run.started_at[:19] if last_run.started_at else '—' }}</dd>
+        <dt>Status</dt><dd><span class="pill pill-status-{{ last_run.status }}">{{ last_run.status }}</span></dd>
+        <dt>Summary</dt><dd>{{ last_run.summary | truncate(120) or '—' }}</dd>
+        {% if last_run.cost_usd %}<dt>Cost</dt><dd>${{ "%.4f"|format(last_run.cost_usd) }}</dd>{% endif %}
+      {% endif %}
+      {% if next_scheduled %}<dt>Schedule</dt><dd>{{ next_scheduled }}</dd>{% endif %}
+      <dt>Effective Policy</dt>
+      <dd>
+        <span class="pill">{{ effective_policy.mode }}</span>
+        {% if effective_policy.can_close %}close{% endif %}
+        {% if effective_policy.can_escalate %}+ escalate{% endif %}
+        {% if effective_policy.can_remediate %}+ remediate{% endif %}
+        {% if effective_policy.can_create_temp_rules %}+ temp rules{% endif %}
+      </dd>
+      <dt>Model Override</dt>
+      <dd>
+        <select class="select select-sm" id="model-override" onchange="saveModelOverride('{{ agent_name }}', this.value)">
+          <option value="" {% if not model_override %}selected{% endif %}>Default ({{ ai_default_model or 'system' }})</option>
+          {% for m in all_models %}<option value="{{ m }}" {% if model_override == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+          <option value="__custom__">Custom…</option>
+        </select>
+        <input type="text" class="input" id="model-override-custom" style="display:none;margin-top:4px" placeholder="model-id" onchange="saveModelOverride('{{ agent_name }}', this.value)">
+      </dd>
+    </dl>
+  </div>
+</div>
+
+<!-- Run History -->
+<div class="panel" style="margin-top:16px">
+  <div class="panel-header"><h2 class="panel-title">Run History ({{ runs | length }})</h2></div>
+  <div class="panel-body">
+    {% if runs %}
+    <div class="table-scroll">
+    <table class="table table-sm">
+      <thead><tr><th>Started</th><th>Status</th><th>Dry</th><th>Summary</th><th>Output</th></tr></thead>
+      <tbody>
+      {% for run in runs %}
+      <tr>
+        <td class="nowrap">{{ run.started_at[:19] if run.started_at else '—' }}</td>
+        <td><span class="pill pill-status-{{ run.status }}">{{ run.status }}</span></td>
+        <td>{% if run.dry_run %}🛡️{% else %}—{% endif %}</td>
+        <td class="muted">{{ run.summary | truncate(80) or '—' }}</td>
+        <td>
+          {% if run.output %}<button class="btn btn-sm" onclick="showOutput(this, '{{ run.output | tojson | forceescape }}')">View</button>{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No runs yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Recommendations for this agent -->
+<div class="panel" style="margin-top:16px">
+  <div class="panel-header"><h2 class="panel-title">Open Recommendations ({{ recs | length }})</h2></div>
+  <div class="panel-body">
+    {% if recs %}
+    <div class="table-scroll">
+    <table class="table table-sm">
+      <thead><tr><th>Kind</th><th>Target</th><th>Title</th><th>Rationale</th><th></th></tr></thead>
+      <tbody>
+      {% for rec in recs %}
+      <tr>
+        <td><span class="pill">{{ rec.kind }}</span></td>
+        <td><code>{{ rec.target }}</code></td>
+        <td><strong>{{ rec.title }}</strong></td>
+        <td class="muted">{{ rec.rationale | truncate(80) }}</td>
+        <td>
+          <button class="btn btn-sm btn-primary" onclick="recApply('{{ rec.rec_id }}')">Approve</button>
+          <button class="btn btn-sm" onclick="recReject('{{ rec.rec_id }}')">Reject</button>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No open recommendations from this agent.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Output viewer modal -->
+<div id="output-modal" class="sheet-overlay" style="display:none">
+  <div class="sheet" style="max-width:720px">
+    <h3>Run Output</h3>
+    <pre id="output-body" class="code-block" style="max-height:60vh;overflow:auto"></pre>
+    <div class="sheet-actions">
+      <button class="btn" onclick="document.getElementById('output-modal').style.display='none'">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function showOutput(btn, rawJson) {
+  try {
+    const data = JSON.parse(rawJson);
+    document.getElementById('output-body').textContent = JSON.stringify(data, null, 2);
+    document.getElementById('output-modal').style.display = 'flex';
+  } catch(e) { alert('Failed to parse output'); }
+}
+async function runAgentNow(name, dry) {
+  if (!dry && !confirm('Run ' + name + ' in REAL mode?')) return;
+  try {
+    const r = await fetch('/api/agents/' + name + '/run', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+    const data = await r.json();
+    if (data.ok) { alert('Done: ' + data.status + '\n' + (data.summary||'')); location.reload(); }
+    else alert('Error: ' + (data.error||'unknown'));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function toggleAgent(name) {
+  try { const r = await fetch('/api/agents/' + name + '/toggle', {method:'POST'}); if((await r.json()).ok) location.reload(); }
+  catch(e) { alert('Error: ' + e.message); }
+}
+async function recApply(id) {
+  try { const r=await fetch('/api/recommendations/'+id+'/apply',{method:'POST'}); if((await r.json()).ok) location.reload(); }
+  catch(e){ alert('Error: '+e.message); }
+}
+async function recReject(id) {
+  try { const r=await fetch('/api/recommendations/'+id+'/reject',{method:'POST'}); if((await r.json()).ok) location.reload(); }
+  catch(e){ alert('Error: '+e.message); }
+}
+async function saveModelOverride(agent, value) {
+  if (value === '__custom__') {
+    document.getElementById('model-override-custom').style.display = 'block';
+    return;
+  }
+  document.getElementById('model-override-custom').style.display = 'none';
+  try {
+    const r = await fetch('/api/agents/' + agent + '/model', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({model: value})
+    });
+    if (!(await r.json()).ok) alert('Failed to save model override');
+  } catch(e) { alert('Error: ' + e.message); }
+}
+</script>
+{% endblock %}

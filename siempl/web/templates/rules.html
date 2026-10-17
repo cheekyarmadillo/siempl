@@ -1,0 +1,259 @@
+<!-- Rules list page -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Rules</h1>
+  <p class="page-subtitle">{{ rules | length }} rules{% if imported_filter == 'disabled' %} · imported, disabled{% endif %}</p>
+  <div class="btn-row">
+    <button class="btn" onclick="impOpen()">Import rule</button>
+    <a href="/rules/new/edit" class="btn btn-primary">+ New Rule</a>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+  <input type="text" class="input input-sm" placeholder="Search..." value="{{ q }}" id="filter-q" onchange="applyFilters()">
+  <select class="select" id="filter-severity" onchange="applyFilters()">
+    <option value="">All severities</option>
+    <option value="informational">Info</option>
+    <option value="low">Low</option>
+    <option value="medium">Medium</option>
+    <option value="high">High</option>
+    <option value="critical">Critical</option>
+  </select>
+  <select class="select" id="filter-origin" onchange="applyFilters()">
+    <option value="">All origins</option>
+    {% for o in origins %}
+    <option value="{{ o }}">{{ o }}</option>
+    {% endfor %}
+  </select>
+  <select class="select" id="filter-enabled" onchange="applyFilters()">
+    <option value="">All</option>
+    <option value="true">Enabled</option>
+    <option value="false">Disabled</option>
+  </select>
+  <select class="select" id="filter-imported" onchange="applyFilters()">
+    <option value="">All rules</option>
+    <option value="disabled">Imported, disabled</option>
+  </select>
+  <a href="/rules" class="btn btn-sm">Clear</a>
+</div>
+
+{% if rules %}
+<div class="table-scroll">
+<table class="table">
+  <thead>
+    <tr><th>Name</th><th>Severity</th><th>Last Run</th><th>Hits</th><th>Alerts</th><th>Open</th><th>Enabled</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rules %}
+  <tr>
+    <td><a href="/rules/{{ r.rule_id }}" class="link">{{ r.name }}</a>{% if r.query_lang == 'sql' %} <span class="pill">SQL</span>{% endif %}</td>
+    <td><span class="badge badge-{{ severity_class.get(r.severity, 'sev-info') }}">{{ r.severity }}</span></td>
+    <td class="nowrap muted">{{ r.last_run_at or '—' }}</td>
+    <td>{{ r.last_row_count or '—' }}</td>
+    <td><a href="/alerts?rule={{ r.rule_id | urlencode }}" class="link">{{ r.alert_total }}</a></td>
+    <td>{{ r.alert_open }}</td>
+    <td>
+      <label class="switch">
+        <input type="checkbox" {% if r.enabled %}checked{% endif %} onchange="toggleRule('{{ r.rule_id }}', this)" aria-label="Toggle rule">
+        <span class="switch-slider"></span>
+      </label>
+    </td>
+    <td>
+      <a href="/rules/{{ r.rule_id }}/edit" class="btn btn-sm">Edit</a>
+      <button class="btn btn-sm" onclick="cloneRule('{{ r.rule_id }}')">Clone</button>
+      <button class="btn btn-sm btn-primary" onclick="runNow('{{ r.rule_id }}')">Run</button>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state">
+  <svg viewBox="0 0 48 48" width="48" height="48"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="var(--color-muted)" stroke-width="1.5" fill="none"/></svg>
+  <p>No rules match your filters.</p>
+</div>
+{% endif %}
+
+<!-- Single import dialog: Sigma, Sentinel, or KQL. Preview first; imports are created DISABLED. -->
+<dialog id="import-dlg" class="import-dialog" aria-labelledby="imp-title">
+  <div class="panel" style="margin:0">
+    <div class="panel-header">
+      <h2 class="panel-title" id="imp-title">Import rule</h2>
+      <button class="btn btn-sm" type="button" onclick="impClose()" aria-label="Close">×</button>
+    </div>
+    <div class="panel-body">
+      <div class="form-stack">
+        <label>Format
+          <select class="select" id="imp-format" onchange="impFormatChanged()">
+            <option value="sigma">Sigma YAML</option>
+            <option value="sentinel">Microsoft Sentinel YAML</option>
+            <option value="kql">KQL / plain query</option>
+          </select>
+        </label>
+        <div class="btn-row">
+          <label><input type="radio" name="imp-source" value="paste" checked onchange="impSourceChanged()"> Paste</label>
+          <label><input type="radio" name="imp-source" value="url" onchange="impSourceChanged()"> URL (github.com or raw.githubusercontent.com, .yml/.yaml, 1 MB max)</label>
+        </div>
+        <textarea class="input kql-editor" id="imp-text" rows="10" placeholder="Paste the rule here…" aria-label="Rule text"></textarea>
+        <input type="url" class="input" id="imp-url" style="display:none" placeholder="https://raw.githubusercontent.com/…/rule.yml" aria-label="Rule URL">
+        <input type="text" class="input" id="imp-name" style="display:none" placeholder="Rule name (required for KQL; optional)" aria-label="Rule name">
+      </div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn" type="button" onclick="impPreview()">Preview</button>
+        <button class="btn btn-primary" type="button" id="imp-commit-btn" onclick="impCommit()" disabled>Import (disabled)</button>
+      </div>
+      <div id="imp-error" class="query-error" style="display:none; margin-top:10px"></div>
+      <div id="imp-preview" style="margin-top:12px"></div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+function applyFilters() {
+  const q = document.getElementById('filter-q').value;
+  const sev = document.getElementById('filter-severity').value;
+  const origin = document.getElementById('filter-origin').value;
+  const en = document.getElementById('filter-enabled').value;
+  const imp = document.getElementById('filter-imported').value;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (sev) params.set('severity', sev);
+  if (origin) params.set('origin', origin);
+  if (en) params.set('enabled', en);
+  if (imp) params.set('imported', imp);
+  location.href = '/rules?' + params.toString();
+}
+
+async function toggleRule(id, el) {
+  try {
+    const checked = el.checked;
+    const action = checked ? '/api/rules/' + id + '/enable' : '/api/rules/' + id + '/delete';
+    const r = await fetch(action, {method: 'POST'});
+    const data = await r.json();
+    if (!data.ok) { el.checked = !el.checked; alert('Failed'); }
+  } catch(e) { el.checked = !el.checked; alert('Error'); }
+}
+
+async function cloneRule(id) {
+  if (!confirm('Clone this rule?')) return;
+  try {
+    const r = await fetch('/api/rules/' + id + '/clone', {method:'POST'});
+    const data = await r.json();
+    if (data.ok) location.href = '/rules/' + data.rule_id;
+    else alert('Failed: ' + (data.error||''));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function runNow(id) {
+  if (!confirm('Run this rule now?')) return;
+  try {
+    const r = await fetch('/api/rules/' + id + '/run-now', {method:'POST'});
+    const data = await r.json();
+    if (data.ok) { alert('Rule run: ' + data.count + ' alerts created'); location.reload(); }
+    else alert('Failed: ' + (data.error||''));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ---- Import dialog -------------------------------------------------------
+function impEl(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined && text !== null) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+function impOpen() { impReset(); document.getElementById('import-dlg').showModal(); }
+function impClose() { document.getElementById('import-dlg').close(); }
+function impSource() { return document.querySelector('input[name=imp-source]:checked').value; }
+function impReset() {
+  document.getElementById('imp-commit-btn').disabled = true;
+  document.getElementById('imp-preview').replaceChildren();
+  document.getElementById('imp-error').style.display = 'none';
+}
+function impSourceChanged() {
+  const url = impSource() === 'url';
+  document.getElementById('imp-text').style.display = url ? 'none' : '';
+  document.getElementById('imp-url').style.display = url ? '' : 'none';
+  impReset();
+}
+function impFormatChanged() {
+  document.getElementById('imp-name').style.display = document.getElementById('imp-format').value === 'kql' ? '' : 'none';
+  impReset();
+}
+function impBody(preview) {
+  const body = {format: document.getElementById('imp-format').value, preview: preview};
+  if (impSource() === 'url') body.url = document.getElementById('imp-url').value.trim();
+  else body.yaml = document.getElementById('imp-text').value;
+  if (body.format === 'kql') body.name = document.getElementById('imp-name').value.trim();
+  return body;
+}
+function impShowError(msg) {
+  const box = document.getElementById('imp-error');
+  box.textContent = msg;
+  box.style.display = 'block';
+}
+async function impRequest(body) {
+  const r = await fetch('/api/rules/import-preview', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  let data = {};
+  try { data = await r.json(); } catch (e) { data = {ok: false, error: 'Unexpected response (HTTP ' + r.status + ')'}; }
+  return data;
+}
+function impRow(dl, label, value) {
+  dl.appendChild(impEl('dt', label));
+  const dd = impEl('dd');
+  if (value instanceof Node) dd.appendChild(value); else dd.textContent = value;
+  dl.appendChild(dd);
+}
+async function impPreview() {
+  impReset();
+  let data;
+  try { data = await impRequest(impBody(true)); } catch (e) { impShowError('Error: ' + e.message); return; }
+  if (!data.ok) { impShowError(data.error || 'Preview failed'); return; }
+  const host = document.getElementById('imp-preview');
+  const panel = impEl('div', null, 'panel');
+  const body = impEl('div', null, 'panel-body');
+  const dl = impEl('dl', null, 'dl-grid');
+  const rule = data.rule;
+  if (data.convertible && rule) {
+    impRow(dl, 'Name', rule.name);
+    impRow(dl, 'Severity', rule.severity);
+    impRow(dl, 'Tables', (rule.tables || []).join(', ') || '—');
+    impRow(dl, 'Query language', rule.query_lang || 'kql');
+    impRow(dl, 'Query (read-only)', impEl('pre', rule.query || '', 'kql-preview'));
+    if (rule.query_sql) impRow(dl, 'SQL (read-only)', impEl('pre', rule.query_sql, 'kql-preview'));
+  } else {
+    impRow(dl, 'Convertible', 'No');
+  }
+  body.appendChild(dl);
+  if (!data.convertible) {
+    body.appendChild(impEl('div', 'Not convertible: ' + (data.reason || 'unknown reason'), 'query-error'));
+  }
+  if (data.warnings && data.warnings.length) {
+    const ul = impEl('ul', null, 'muted');
+    data.warnings.forEach(w => ul.appendChild(impEl('li', w)));
+    body.appendChild(impEl('div', 'Warnings', null));
+    body.appendChild(ul);
+  }
+  let canImport = data.convertible;
+  if (data.duplicate) {
+    body.appendChild(impEl('div', 'Already imported as "' + data.duplicate.name + '" (' + data.duplicate.rule_id + '). Import is blocked.', 'query-error'));
+    canImport = false;
+  }
+  panel.appendChild(body);
+  host.appendChild(panel);
+  document.getElementById('imp-commit-btn').disabled = !canImport;
+}
+async function impCommit() {
+  const btn = document.getElementById('imp-commit-btn');
+  btn.disabled = true;
+  let data;
+  try { data = await impRequest(impBody(false)); } catch (e) { impShowError('Error: ' + e.message); btn.disabled = false; return; }
+  if (data.ok && data.rule_id) { location.href = '/rules/' + data.rule_id; return; }
+  impShowError(data.error || 'Import failed');
+  btn.disabled = false;
+}
+if (new URLSearchParams(location.search).get('import') === '1') impOpen();
+</script>
+{% endblock %}

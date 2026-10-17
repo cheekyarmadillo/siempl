@@ -1,0 +1,821 @@
+<!-- Logs page: KQL editor + results (table, chart, pivot) + schema browser + query history.
+     The results container is always in the DOM (hidden until there is a result) so the JS can fill it.
+     With ?q= the table is pre-rendered by the server and the same data is embedded as JSON
+     (#initial-result) for the chart and pivot tools. Pure helpers live in #logs-helpers (no DOM, node-testable). -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Logs</h1>
+  <p class="page-subtitle">Query your data with KQL</p>
+</div>
+
+{% if modules.kql %}
+<div class="logs-layout">
+  <!-- Schema browser -->
+  <aside class="schema-browser">
+    <h3 class="schema-title">Tables</h3>
+    {% for t in tables_info %}
+    <details class="schema-table">
+      <summary class="schema-table-name" title="{{ t.description }}">{{ t.name }}</summary>
+      <ul class="schema-columns">
+        {% for col in t.columns %}
+        <li class="schema-col" onclick="insertText('{{ col }}')" title="Click to insert">{{ col }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endfor %}
+    {% if not tables_info %}
+    <p class="muted">No tables found.</p>
+    {% endif %}
+  </aside>
+
+  <!-- Main query area -->
+  <div class="query-area">
+    <div class="query-editor-wrapper">
+      <div class="query-editor-header">
+        <span class="query-label">KQL</span>
+        <div class="time-range-picker">
+          <select class="select" id="time-range" title="Filters TimeGenerated on the first table; not applied to alerts/entities or let queries">
+            <option value="" {% if not time_range %}selected{% endif %}>All time</option>
+            <option value="15m" {% if time_range == '15m' %}selected{% endif %}>Last 15m</option>
+            <option value="1h" {% if time_range == '1h' %}selected{% endif %}>Last hour</option>
+            <option value="6h" {% if time_range == '6h' %}selected{% endif %}>Last 6h</option>
+            <option value="24h" {% if time_range == '24h' %}selected{% endif %}>Last 24h</option>
+            <option value="7d" {% if time_range == '7d' %}selected{% endif %}>Last 7d</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="run-query-btn" onclick="runQuery()">▶ Run <span class="kbd-shortcut">⌘↵</span></button>
+      </div>
+      <textarea id="kql-editor" class="kql-editor" rows="6" placeholder="Type a KQL query…&#10;&#10;Example:  AuthEvents | where EventResult == 'failure' | take 100" spellcheck="false">{{ initial_query or '' }}</textarea>
+    </div>
+
+    <!-- Error display: filled by JS for fetch errors, pre-filled by the server for ?q= errors -->
+    <div id="query-error" class="query-error" role="alert" style="display:{% if error %}block{% else %}none{% endif %}">
+      <strong id="query-error-title">{% if error %}Query error{% endif %}</strong>
+      <pre class="logs-error-text" id="query-error-text">{{ error }}</pre>
+    </div>
+
+    <!-- Loading -->
+    <div id="query-loading" class="query-loading" style="display:none">
+      <div class="spinner"></div> Running query…
+    </div>
+
+    <div id="query-notice" class="logs-notice" style="display:{% if time_range_note %}block{% else %}none{% endif %}">{{ time_range_note }}</div>
+
+    <!-- Results (always rendered; hidden until a result exists) -->
+    {% set columns = result.columns if result else [] %}
+    {% set rows = result.rows if result else [] %}
+    <div id="query-results" class="logs-results" style="display:{% if result %}block{% else %}none{% endif %}">
+      <div class="results-header">
+        <span id="results-summary"></span>
+        <div class="results-actions">
+          <select class="select" id="limit-select" onchange="runWithLimit()" title="Rows shown on screen. Exports ignore it.">
+            <option value="10" {% if display_limit == 10 %}selected{% endif %}>Limit 10</option>
+            <option value="50" {% if display_limit == 50 %}selected{% endif %}>Limit 50</option>
+            <option value="100" {% if display_limit == 100 %}selected{% endif %}>Limit 100</option>
+            <option value="500" {% if display_limit == 500 %}selected{% endif %}>Limit 500</option>
+            <option value="1000" {% if display_limit == 1000 %}selected{% endif %}>Limit 1000</option>
+            <option value="0" {% if not display_limit %}selected{% endif %}>No limit</option>
+          </select>
+          <button class="btn btn-sm" id="chart-toggle" onclick="toggleViz('chart')">Chart</button>
+          <button class="btn btn-sm" id="pivot-toggle" onclick="toggleViz('pivot')">Pivot</button>
+          <button class="btn btn-sm" onclick="exportQuery('csv')">Export CSV</button>
+          <button class="btn btn-sm" onclick="exportQuery('json')">Export JSON</button>
+          <button class="btn btn-sm" onclick="closeResults()">× Close</button>
+        </div>
+      </div>
+      <div id="export-notice" class="logs-notice" style="display:none"></div>
+
+      <!-- Chart tool -->
+      <div id="chart-panel" class="logs-viz" style="display:none">
+        <div class="logs-viz-controls">
+          <label class="logs-field">Data
+            <select class="select select-sm" id="chart-source" onchange="onChartSourceChange()">
+              <option value="results">Query results</option>
+              <option value="pivot" disabled>Pivot table</option>
+            </select>
+          </label>
+          <label class="logs-field">Type
+            <select class="select select-sm" id="chart-type" onchange="renderChart()">
+              <option value="bar">Bar</option>
+              <option value="pie">Pie</option>
+            </select>
+          </label>
+          <label class="logs-field">Label
+            <select class="select select-sm" id="chart-label" onchange="renderChart()"></select>
+          </label>
+          <label class="logs-field">Value
+            <select class="select select-sm" id="chart-value" onchange="renderChart()"></select>
+          </label>
+        </div>
+        <div id="chart-output" class="logs-chart"></div>
+        <div id="chart-legend" class="logs-legend"></div>
+        <p id="chart-note" class="muted logs-viz-note"></p>
+      </div>
+
+      <!-- Pivot tool -->
+      <div id="pivot-panel" class="logs-viz" style="display:none">
+        <div class="logs-viz-controls">
+          <label class="logs-field">Group by
+            <select class="select select-sm" id="pivot-group"></select>
+          </label>
+          <label class="logs-field">Aggregate
+            <select class="select select-sm" id="pivot-agg" onchange="fillPivotValues()">
+              <option value="count">count</option>
+              <option value="sum">sum</option>
+              <option value="avg">avg</option>
+              <option value="min">min</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+          <label class="logs-field">Value
+            <select class="select select-sm" id="pivot-value"></select>
+          </label>
+          <button class="btn btn-sm" onclick="runLocalPivot()">Pivot displayed rows</button>
+          <button class="btn btn-sm btn-primary" onclick="runPivotKql()">Run as KQL</button>
+        </div>
+        <p class="muted logs-viz-note">"Pivot displayed rows" is instant but covers only the rows on screen. "Run as KQL" appends a summarize to the query and aggregates the full result on the server.</p>
+        <div id="pivot-output" class="table-scroll"></div>
+        <p id="pivot-note" class="muted logs-viz-note"></p>
+      </div>
+
+      <div class="table-scroll">
+        <table class="table results-table" id="results-table">
+          <thead id="results-thead"><tr>{% for c in columns %}<th class="sortable-col" onclick="sortTable(this)">{{ c }} ▲▼</th>{% endfor %}</tr></thead>
+          <tbody id="results-tbody">
+          {% for row in rows %}
+            <tr data-idx="{{ loop.index0 }}">{% for cell in row %}{% set txt = '' if cell is none else (cell | string) %}<td>{{ txt | truncate(100) }}</td>{% endfor %}</tr>
+          {% else %}
+            <tr><td colspan="{{ columns | length }}" class="muted">No results</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Query History -->
+    {% if query_history %}
+    <details class="panel query-history-panel" style="margin-top:16px">
+      <summary class="panel-header" style="cursor:pointer">
+        <h2 class="panel-title">Query History ({{ query_history | length }})</h2>
+      </summary>
+      <div class="panel-body">
+        <table class="table table-sm">
+          <thead><tr><th>Time</th><th>KQL</th><th>Rows</th><th>Elapsed</th></tr></thead>
+          <tbody>
+          {% for h in query_history %}
+          <tr class="query-history-row" onclick="document.getElementById('kql-editor').value = {{ h.kql | tojson | forceescape }}; document.getElementById('query-results').style.display='none'">
+            <td class="nowrap">{{ h.ts }}</td>
+            <td class="query-text">{{ h.kql | truncate(120) }}</td>
+            <td>{{ h.rows_returned }}</td>
+            <td>{{ "%.0f" | format(h.elapsed_ms) }}ms</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Log-alert agent (scope logs). Collapsed by default; the panel mounts when the card is opened. -->
+<details class="panel logs-agent-card" id="logs-agent-card">
+  <summary class="panel-header panel-title">Log-alert agent</summary>
+  <div class="panel-body">
+    <div id="logs-agent-panel" data-agent-scope="logs" data-agent-target="logs"></div>
+  </div>
+</details>
+<script src="/static/agent_panel.js"></script>
+<script>
+(function () {
+  var card = document.getElementById('logs-agent-card');
+  var box = document.getElementById('logs-agent-panel');
+  if (!card || !box) { return; }
+  card.addEventListener('toggle', function () {
+    if (card.open) { window.AgentPanel.mount(box, 'logs', 'logs'); }
+    else if (box._agentPanel) { box._agentPanel.destroy(); }
+  });
+})();
+</script>
+
+<script type="application/json" id="initial-result">{{ result | tojson }}</script>
+
+<script id="logs-helpers">
+// Pure helpers for the Logs page: no DOM access, so tests/test_web_logs_js.py can run them under node.
+const LOGS_OTHER_COLOR = '#8a8f98';
+const LOGS_MAX_SLICES = 20;
+const LOGS_PIVOT_AGGS = ['count', 'sum', 'avg', 'min', 'max'];
+const KQL_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function isBlank(v) { return v === null || v === undefined || v === ''; }
+function cellText(v) { return isBlank(v) ? '' : String(v); }
+function labelText(v) { return v === null || v === undefined ? '(null)' : String(v); }
+function truncateText(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+// Number value of a cell, or null when it is not a finite number (numbers and numeric strings count).
+function numericValue(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+function isNumericValue(v) { return numericValue(v) !== null; }
+
+// True when every non-blank value is numeric and there is at least one value.
+function columnIsNumeric(rows, idx) {
+  let seen = false;
+  for (const row of rows) {
+    const v = row[idx];
+    if (isBlank(v)) continue;
+    if (!isNumericValue(v)) return false;
+    seen = true;
+  }
+  return seen;
+}
+
+// Chart defaults: label = first non-numeric column (else first column); value = first numeric column other
+// than the label, or -1 (count of rows) when there is none.
+function defaultChartColumns(columns, rows) {
+  const numeric = columns.map((_, i) => columnIsNumeric(rows, i));
+  let label = numeric.indexOf(false);
+  if (label < 0) label = 0;
+  const value = numeric.findIndex((isNum, i) => isNum && i !== label);
+  return { label: label, value: value };
+}
+
+// Sum the value column per label (or count rows when valueIdx < 0). Negative and non-numeric values are skipped.
+function chartAggregate(rows, labelIdx, valueIdx) {
+  const sums = new Map();
+  let skipped = 0;
+  for (const row of rows) {
+    const key = labelText(row[labelIdx]);
+    if (valueIdx < 0) {
+      sums.set(key, (sums.get(key) || 0) + 1);
+      continue;
+    }
+    const n = numericValue(row[valueIdx]);
+    if (n === null || n < 0) {
+      if (!isBlank(row[valueIdx])) skipped += 1;
+      continue;
+    }
+    sums.set(key, (sums.get(key) || 0) + n);
+  }
+  const items = Array.from(sums, ([label, value]) => ({ label: label, value: value }));
+  return { items: items, skipped: skipped };
+}
+
+// Sort by value descending; keep the top `max` and fold the rest into one 'Other' slice.
+function topSlices(items, max) {
+  const cap = max || LOGS_MAX_SLICES;
+  const sorted = items.slice().sort((a, b) => b.value - a.value || String(a.label).localeCompare(String(b.label)));
+  const top = sorted.slice(0, cap).map(s => ({ label: s.label, value: s.value, other: false }));
+  if (sorted.length > cap) {
+    const rest = sorted.slice(cap).reduce((acc, s) => acc + s.value, 0);
+    top.push({ label: 'Other', value: rest, other: true, groups: sorted.length - cap });
+  }
+  return top;
+}
+
+function sliceColor(slice, i) {
+  return slice.other ? LOGS_OTHER_COLOR : 'hsl(' + ((i * 47) % 360) + ' 62% 50%)';
+}
+function formatNumber(v) {
+  if (!Number.isFinite(v)) return String(v);
+  return String(Number(v.toPrecision(8)));
+}
+function percentOf(v, total) { return total > 0 ? (v / total * 100).toFixed(1) : '0.0'; }
+
+// Pie chart as an inline SVG string. Zero and negative slices are not drawn; each slice has a <title> tooltip.
+function pieSvg(slices) {
+  const total = slices.reduce((a, s) => a + (s.value > 0 ? s.value : 0), 0);
+  const drawn = slices.filter(s => s.value > 0);
+  if (total <= 0 || drawn.length === 0) return '<p class="muted">Nothing to plot.</p>';
+  const parts = [];
+  let angle = -Math.PI / 2;
+  slices.forEach((s, i) => {
+    if (!(s.value > 0)) return;
+    const color = sliceColor(s, i);
+    const title = escapeHtml(s.label + ': ' + formatNumber(s.value) + ' (' + percentOf(s.value, total) + '%)');
+    if (drawn.length === 1) {
+      parts.push('<circle cx="100" cy="100" r="90" fill="' + color + '"><title>' + title + '</title></circle>');
+      return;
+    }
+    const frac = s.value / total;
+    const next = angle + frac * 2 * Math.PI;
+    const large = frac > 0.5 ? 1 : 0;
+    const x1 = (100 + 90 * Math.cos(angle)).toFixed(3), y1 = (100 + 90 * Math.sin(angle)).toFixed(3);
+    const x2 = (100 + 90 * Math.cos(next)).toFixed(3), y2 = (100 + 90 * Math.sin(next)).toFixed(3);
+    parts.push('<path d="M100 100 L' + x1 + ' ' + y1 + ' A90 90 0 ' + large + ' 1 ' + x2 + ' ' + y2 + ' Z" fill="' + color + '"><title>' + title + '</title></path>');
+    angle = next;
+  });
+  return '<svg class="logs-chart-svg" viewBox="0 0 200 200" role="img" aria-label="Pie chart">' + parts.join('') + '</svg>';
+}
+
+// Horizontal bar chart as an inline SVG string, one row per slice, scaled to the largest value.
+function barSvg(slices) {
+  if (slices.length === 0) return '<p class="muted">Nothing to plot.</p>';
+  const max = Math.max(0, ...slices.map(s => s.value)) || 1;
+  const rowH = 24, labelW = 190, barW = 330, valW = 90;
+  const width = labelW + barW + valW, height = slices.length * rowH + 8;
+  const rows = slices.map((s, i) => {
+    const y = 4 + i * rowH;
+    const bw = Math.max(0, s.value / max * barW);
+    const title = escapeHtml(s.label + ': ' + formatNumber(s.value));
+    return '<text x="' + (labelW - 8) + '" y="' + (y + 13) + '" text-anchor="end" class="logs-chart-label"><title>' + title + '</title>' + escapeHtml(truncateText(String(s.label), 28)) + '</text>'
+      + '<rect x="' + labelW + '" y="' + (y + 3) + '" width="' + bw.toFixed(2) + '" height="16" rx="3" fill="' + sliceColor(s, i) + '"><title>' + title + '</title></rect>'
+      + '<text x="' + (labelW + bw + 6).toFixed(2) + '" y="' + (y + 15) + '" class="logs-chart-value">' + escapeHtml(formatNumber(s.value)) + '</text>';
+  });
+  return '<svg class="logs-chart-svg logs-chart-bar" viewBox="0 0 ' + width + ' ' + height + '" width="100%" role="img" aria-label="Bar chart">' + rows.join('') + '</svg>';
+}
+
+function legendHtml(slices) {
+  const total = slices.reduce((a, s) => a + (s.value > 0 ? s.value : 0), 0);
+  return slices.map((s, i) =>
+    '<div class="logs-legend-item" title="' + escapeHtml(s.label) + '">'
+    + '<span class="logs-swatch" style="background:' + sliceColor(s, i) + '"></span>'
+    + '<span class="logs-legend-label">' + escapeHtml(s.label) + '</span>'
+    + '<span class="logs-legend-value">' + escapeHtml(formatNumber(s.value)) + ' (' + percentOf(s.value, total) + '%)</span></div>'
+  ).join('');
+}
+
+// Ordering that puts numbers before strings; used by min/max and by the pivot sort.
+function compareMixed(a, b) {
+  const an = typeof a === 'number', bn = typeof b === 'number';
+  if (an && bn) return a - b;
+  if (an !== bn) return an ? -1 : 1;
+  return a < b ? -1 : (a > b ? 1 : 0);
+}
+function pickBest(best, raw, agg) {
+  const v = isNumericValue(raw) ? Number(raw) : String(raw);
+  if (best === undefined) return v;
+  const cmp = compareMixed(v, best);
+  return (agg === 'min' ? cmp < 0 : cmp > 0) ? v : best;
+}
+function pivotCell(agg, g) {
+  if (agg === 'count') return g.count;
+  if (agg === 'min' || agg === 'max') return g.best === undefined ? null : g.best;
+  if (g.n === 0) return null;
+  if (agg === 'sum') return g.sum;
+  return Number((g.sum / g.n).toPrecision(10));
+}
+function aggColumnName(agg, valueName) { return agg === 'count' ? 'count' : agg + '(' + valueName + ')'; }
+
+// Group rows by groupIdx and aggregate valueIdx (ignored for count). Result sorted by value, nulls last.
+function computePivot(columns, rows, groupIdx, valueIdx, agg) {
+  const acc = new Map();
+  let skipped = 0;
+  for (const row of rows) {
+    const key = labelText(row[groupIdx]);
+    if (!acc.has(key)) acc.set(key, { count: 0, sum: 0, n: 0, best: undefined });
+    const g = acc.get(key);
+    g.count += 1;
+    if (agg === 'count' || isBlank(row[valueIdx])) continue;
+    if (agg === 'min' || agg === 'max') {
+      g.best = pickBest(g.best, row[valueIdx], agg);
+      continue;
+    }
+    const n = numericValue(row[valueIdx]);
+    if (n === null) { skipped += 1; continue; }
+    g.sum += n;
+    g.n += 1;
+  }
+  const out = Array.from(acc, ([key, g]) => [key, pivotCell(agg, g)]);
+  out.sort((a, b) => {
+    if (a[1] === null) return b[1] === null ? 0 : 1;
+    if (b[1] === null) return -1;
+    return compareMixed(b[1], a[1]);
+  });
+  const valueName = valueIdx >= 0 ? columns[valueIdx] : '';
+  return { columns: [columns[groupIdx], aggColumnName(agg, valueName)], rows: out, skipped: skipped };
+}
+
+// KQL for "Run as KQL": the user's query plus `| summarize <agg>(<col>) by <col>`. Names must be plain identifiers.
+function buildPivotKql(query, groupCol, agg, valueCol) {
+  const base = String(query || '').trim();
+  if (!base) return { error: 'Run a query first.' };
+  if (!LOGS_PIVOT_AGGS.includes(agg)) return { error: 'Unknown aggregate: ' + agg };
+  if (!KQL_IDENT.test(groupCol)) return { error: '"' + groupCol + '" is not a plain KQL column name; use "Pivot displayed rows" instead.' };
+  let expr = 'count()';
+  if (agg !== 'count') {
+    if (!valueCol) return { error: 'Choose a value column for ' + agg + '.' };
+    if (!KQL_IDENT.test(valueCol)) return { error: '"' + valueCol + '" is not a plain KQL column name; use "Pivot displayed rows" instead.' };
+    expr = agg + '(' + valueCol + ')';
+  }
+  return { kql: base + '\n| summarize ' + expr + ' by ' + groupCol };
+}
+
+// Server error text for a non-OK or non-JSON response. The server's own {"error": ...} text is shown verbatim.
+function responseErrorMessage(status, data, text) {
+  if (data && typeof data.error === 'string') return data.error;
+  if (data && data.detail !== undefined) {
+    return 'HTTP ' + status + ': ' + (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+  }
+  const body = String(text || '').trim();
+  return 'HTTP ' + status + (body ? ': ' + body.slice(0, 500) : ' (empty response)');
+}
+
+function filenameFromDisposition(value) {
+  const m = /filename="([^"]+)"/.exec(value || '');
+  return m ? m[1] : '';
+}
+
+function resultSummary(data) {
+  const n = data.rows.length;
+  const parts = [data.truncated ? 'Showing ' + n + ' rows (truncated)' : n + ' rows'];
+  if (data.limit_applied) parts.push('display limit ' + data.limit_applied + ' applied');
+  if (data.time_range) parts.push('time range last ' + data.time_range);
+  return parts.join(' · ') + '. SQL: ' + String(data.sql || '').slice(0, 120) + '… (' + Number(data.elapsed_ms || 0).toFixed(0) + 'ms)';
+}
+
+function parseJsonText(text) {
+  try { return JSON.parse(text); } catch (e) { return null; }
+}
+</script>
+
+<script>
+// ---- Logs page controller (DOM). Pure helpers are in #logs-helpers above. ----
+let currentResult = null;  // {query, requested_time_range, time_range, columns, rows, truncated, sql, ...}
+let pivotResult = null;    // {columns, rows, skipped} from the local pivot
+
+function byId(id) { return document.getElementById(id); }
+// Column index held by a <select> of column indexes; -1 when empty (an empty select must never mean column 0).
+function selectedIndex(id) {
+  const v = byId(id).value;
+  return v === '' ? -1 : Number(v);
+}
+
+function showError(title, message) {
+  byId('query-error-title').textContent = title;
+  byId('query-error-text').textContent = message;
+  byId('query-error').style.display = 'block';
+}
+function hideError() { byId('query-error').style.display = 'none'; }
+function setLoading(on) { byId('query-loading').style.display = on ? 'flex' : 'none'; }
+function setResultsVisible(on) { byId('query-results').style.display = on ? 'block' : 'none'; }
+function showNotice(id, text) {
+  const el = byId(id);
+  el.textContent = text || '';
+  el.style.display = text ? 'block' : 'none';
+}
+
+function insertText(text) {
+  const el = byId('kql-editor');
+  el.focus();
+  const start = el.selectionStart;
+  el.setRangeText(text + ' ', start, el.selectionEnd, 'end');
+}
+
+function limitValue() {
+  const v = parseInt(byId('limit-select').value, 10);
+  return Number.isNaN(v) ? 50 : v;
+}
+
+function runWithLimit() { runQuery(); }
+
+function closeResults() { setResultsVisible(false); }
+
+async function runQuery() {
+  const query = byId('kql-editor').value.trim();
+  if (!query) return;
+  const timeRange = byId('time-range').value;
+  const body = JSON.stringify({ query: query, limit: limitValue(), time_range: timeRange });
+
+  hideError();
+  setResultsVisible(false);
+  setLoading(true);
+  let response, text;
+  try {
+    response = await fetch('/api/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body });
+    text = await response.text();
+  } catch (e) {
+    setLoading(false);
+    showError('Network error', 'Could not reach the server: ' + e.message);
+    return;
+  }
+  setLoading(false);
+
+  const data = parseJsonText(text);
+  if (!response.ok || (data && data.error)) {
+    const title = response.status >= 500 ? 'Server error' : 'Query error';
+    showError(title, responseErrorMessage(response.status, data, text));
+    return;
+  }
+  if (!data || !Array.isArray(data.columns)) {
+    showError('Unexpected response', responseErrorMessage(response.status, null, text));
+    return;
+  }
+  try {
+    data.query = query;
+    data.requested_time_range = timeRange;
+    currentResult = data;
+    renderTable(data);
+    afterResultsChanged();
+  } catch (e) {
+    console.error(e);
+    showError('Client error', 'The results could not be displayed (this is a page bug, not a query error): ' + e.message);
+  }
+}
+
+function renderTable(data) {
+  byId('results-thead').innerHTML = '<tr>' + data.columns.map(c =>
+    '<th class="sortable-col" onclick="sortTable(this)">' + escapeHtml(c) + ' ▲▼</th>').join('') + '</tr>';
+  const tbody = byId('results-tbody');
+  if (data.rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="' + data.columns.length + '" class="muted">No results</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.rows.map((row, idx) =>
+    '<tr data-idx="' + idx + '">' + row.map(cell => '<td>' + escapeHtml(truncateText(cellText(cell), 100)) + '</td>').join('') + '</tr>'
+  ).join('');
+}
+
+// Shared by the fetch path and the server-rendered path (initial JSON).
+function afterResultsChanged() {
+  const data = currentResult;
+  byId('results-summary').textContent = resultSummary(data);
+  showNotice('query-notice', data.time_range_note);
+  showNotice('export-notice', '');
+  pivotResult = null;
+  byId('pivot-output').innerHTML = '';
+  byId('pivot-note').textContent = '';
+  setPivotChartOption(false);
+  bindRowDetail();
+  setResultsVisible(true);
+  populateVizControls();
+  if (byId('chart-panel').style.display !== 'none') renderChart();
+}
+
+function bindRowDetail() {
+  byId('results-tbody').querySelectorAll('tr[data-idx]').forEach(tr => {
+    tr.style.cursor = 'pointer';
+    tr.onclick = () => toggleRowDetail(tr);
+  });
+}
+
+function toggleRowDetail(tr) {
+  const existing = byId('row-detail');
+  const idx = tr.dataset.idx;
+  if (existing) {
+    const same = existing.dataset.row === idx;
+    existing.remove();
+    if (same) return;
+  }
+  const values = currentResult.rows[Number(idx)] || [];
+  const fields = currentResult.columns.map((c, i) =>
+    '<div class="detail-field"><strong>' + escapeHtml(c) + '</strong><code>' + escapeHtml(cellText(values[i]) || '—') + '</code></div>'
+  ).join('');
+  const wrap = document.createElement('tr');
+  wrap.id = 'row-detail';
+  wrap.dataset.row = idx;
+  wrap.innerHTML = '<td colspan="' + currentResult.columns.length + '"><div class="row-detail">'
+    + '<button class="close-btn" type="button">×</button>' + fields + '</div></td>';
+  wrap.querySelector('.close-btn').onclick = () => wrap.remove();
+  tr.insertAdjacentElement('afterend', wrap);
+}
+
+function reportExportNotice(headers) {
+  const rows = Number(headers.get('X-Export-Rows') || 0);
+  const cap = Number(headers.get('X-Export-Row-Cap') || 0);
+  const parts = [];
+  if (headers.get('X-Export-Truncated') === 'true') {
+    parts.push('Export capped at ' + cap + ' rows: the file holds the first ' + rows + ' rows of a larger result. Narrow the query or time range to get everything.');
+  } else {
+    parts.push('Exported ' + rows + ' rows.');
+  }
+  const note = decodeURIComponent(headers.get('X-Time-Range-Note') || '');
+  if (note) parts.push(note + '.');
+  showNotice('export-notice', parts.join(' '));
+}
+
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Export re-runs the same query and time range the table came from (server applies the same rules),
+// so the file matches the screen except for the display limit, which exports ignore.
+async function exportQuery(format) {
+  const src = currentResult;
+  const query = src ? src.query : byId('kql-editor').value.trim();
+  if (!query) return;
+  const timeRange = src ? src.requested_time_range : byId('time-range').value;
+  hideError();
+  showNotice('export-notice', '');
+  let response, blob;
+  try {
+    response = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: query, time_range: timeRange, format: format }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      showError('Export failed', responseErrorMessage(response.status, parseJsonText(text), text));
+      return;
+    }
+    blob = await response.blob();
+  } catch (e) {
+    showError('Network error', 'Export failed: could not reach the server: ' + e.message);
+    return;
+  }
+  saveBlob(blob, filenameFromDisposition(response.headers.get('Content-Disposition')) || 'siempl-export.' + format);
+  reportExportNotice(response.headers);
+}
+
+// ---- Chart and pivot tools (operate on currentResult, or on pivotResult for the chart) ----
+
+function toggleViz(which) {
+  const panel = byId(which + '-panel');
+  const open = panel.style.display === 'none';
+  panel.style.display = open ? 'block' : 'none';
+  byId(which + '-toggle').classList.toggle('btn-primary', open);
+  if (open) {
+    populateVizControls();
+    if (which === 'chart') renderChart();
+  }
+}
+
+function fillSelect(sel, pairs, selected) {
+  sel.innerHTML = pairs.map(p =>
+    '<option value="' + p[0] + '"' + (p[0] === selected ? ' selected' : '') + '>' + escapeHtml(p[1]) + '</option>'
+  ).join('');
+}
+
+function setPivotChartOption(on) {
+  const opt = byId('chart-source').querySelector('option[value="pivot"]');
+  opt.disabled = !on;
+  if (!on) byId('chart-source').value = 'results';
+}
+
+function chartDataset() {
+  if (byId('chart-source').value === 'pivot' && pivotResult) return pivotResult;
+  return currentResult;
+}
+
+function populateVizControls() {
+  if (!currentResult) return;
+  fillChartColumns();
+  fillPivotColumns();
+}
+
+function fillChartColumns() {
+  const ds = chartDataset();
+  if (!ds) return;
+  const defaults = defaultChartColumns(ds.columns, ds.rows);
+  fillSelect(byId('chart-label'), ds.columns.map((c, i) => [i, c]), defaults.label);
+  const numeric = ds.columns.map((c, i) => [i, c]).filter(p => columnIsNumeric(ds.rows, p[0]));
+  fillSelect(byId('chart-value'), [[-1, 'Count of rows']].concat(numeric), defaults.value);
+}
+
+function onChartSourceChange() {
+  fillChartColumns();
+  renderChart();
+}
+
+function renderChart() {
+  const ds = chartDataset();
+  const out = byId('chart-output');
+  const legend = byId('chart-legend');
+  const note = byId('chart-note');
+  if (!ds || !ds.rows) {
+    out.innerHTML = '';
+    legend.innerHTML = '';
+    note.textContent = 'Run a query first.';
+    return;
+  }
+  const labelIdx = selectedIndex('chart-label');
+  const valueIdx = selectedIndex('chart-value');
+  if (labelIdx === valueIdx) {
+    out.innerHTML = '';
+    legend.innerHTML = '';
+    note.textContent = 'Choose different columns for label and value.';
+    return;
+  }
+  const agg = chartAggregate(ds.rows, labelIdx, valueIdx);
+  const slices = topSlices(agg.items, LOGS_MAX_SLICES);
+  out.innerHTML = byId('chart-type').value === 'pie' ? pieSvg(slices) : barSvg(slices);
+  legend.innerHTML = legendHtml(slices);
+  const parts = [agg.items.length + (agg.items.length === 1 ? ' group' : ' groups')];
+  if (agg.items.length > LOGS_MAX_SLICES) parts.push('top ' + LOGS_MAX_SLICES + ' shown, the rest in Other');
+  if (valueIdx < 0) parts.push('counting rows');
+  if (agg.skipped) parts.push(agg.skipped + ' non-numeric or negative values skipped');
+  note.textContent = parts.join('; ') + '.';
+}
+
+function fillPivotColumns() {
+  const ds = currentResult;
+  const defaults = defaultChartColumns(ds.columns, ds.rows);
+  fillSelect(byId('pivot-group'), ds.columns.map((c, i) => [i, c]), defaults.label);
+  fillPivotValues();
+}
+
+// sum/avg need a numeric value column; min/max accept any; count ignores the value column.
+function fillPivotValues() {
+  const ds = currentResult;
+  const agg = byId('pivot-agg').value;
+  const numericOnly = agg === 'sum' || agg === 'avg';
+  const pairs = ds.columns.map((c, i) => [i, c]).filter(p => !numericOnly || columnIsNumeric(ds.rows, p[0]));
+  fillSelect(byId('pivot-value'), pairs, pairs.length ? pairs[0][0] : -1);
+  byId('pivot-value').disabled = agg === 'count';
+}
+
+function pivotNote(text) { byId('pivot-note').textContent = text; }
+
+function runLocalPivot() {
+  const ds = currentResult;
+  if (!ds) return;
+  const agg = byId('pivot-agg').value;
+  const groupIdx = selectedIndex('pivot-group');
+  const valueIdx = agg === 'count' ? -1 : selectedIndex('pivot-value');
+  if (agg !== 'count' && valueIdx < 0) {
+    pivotNote('No column is available for ' + agg + '.');
+    return;
+  }
+  pivotResult = computePivot(ds.columns, ds.rows, groupIdx, valueIdx, agg);
+  byId('pivot-output').innerHTML = tableHtml(pivotResult.columns, pivotResult.rows);
+  setPivotChartOption(true);
+  byId('chart-source').value = 'pivot';
+  fillChartColumns();
+  if (byId('chart-panel').style.display !== 'none') renderChart();
+  const skipNote = pivotResult.skipped ? pivotResult.skipped + ' non-numeric values ignored. ' : '';
+  pivotNote('Pivot over ' + ds.rows.length + ' displayed rows. ' + skipNote + 'Use "Run as KQL" for the full query result.');
+}
+
+function tableHtml(columns, rows) {
+  const head = '<tr>' + columns.map(c => '<th>' + escapeHtml(c) + '</th>').join('') + '</tr>';
+  const body = rows.map(r => '<tr>' + r.map(c => '<td>' + escapeHtml(cellText(c)) + '</td>').join('') + '</tr>').join('');
+  return '<table class="table table-sm"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
+}
+
+// Appends the summarize to the query the table came from and runs it (time range and display limit as usual).
+function runPivotKql() {
+  const ds = currentResult;
+  if (!ds || !ds.query) {
+    pivotNote('Run a query first.');
+    return;
+  }
+  const agg = byId('pivot-agg').value;
+  const groupIdx = selectedIndex('pivot-group');
+  const valueIdx = selectedIndex('pivot-value');
+  const groupName = groupIdx < 0 ? '' : ds.columns[groupIdx];
+  const valueName = agg === 'count' || valueIdx < 0 ? '' : ds.columns[valueIdx];
+  const built = buildPivotKql(ds.query, groupName, agg, valueName);
+  if (built.error) {
+    pivotNote(built.error);
+    return;
+  }
+  byId('kql-editor').value = built.kql;
+  runQuery();
+}
+
+function sortTable(th) {
+  const col = th.textContent.replace(' ▲▼', '').trim();
+  sortDir[col] = sortDir[col] === 'asc' ? 'desc' : 'asc';
+  const dir = sortDir[col];
+  const table = th.closest('table');
+  const tbody = table.querySelector('tbody');
+  const idx = Array.from(th.parentElement.children).indexOf(th);
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    const va = a.children[idx]?.textContent || '';
+    const vb = b.children[idx]?.textContent || '';
+    const na = isNaN(va) ? va : Number(va);
+    const nb = isNaN(vb) ? vb : Number(vb);
+    if (na < nb) return dir === 'asc' ? -1 : 1;
+    if (na > nb) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+let sortDir = {};
+
+function initLogsPage() {
+  const el = byId('initial-result');
+  const initial = el ? parseJsonText(el.textContent) : null;
+  if (initial && Array.isArray(initial.columns)) {
+    currentResult = initial;
+    afterResultsChanged();
+  }
+  byId('kql-editor').addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      runQuery();
+    }
+  });
+}
+initLogsPage();
+</script>
+{% endif %}
+{% endblock %}

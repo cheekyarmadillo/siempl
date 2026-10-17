@@ -1,0 +1,489 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Ingestion</h1>
+  <p class="page-subtitle">{{ sources | length }} sources</p>
+  <button class="btn btn-primary" onclick="showAddSource()">+ Add Source</button>
+</div>
+
+{# --- Overview: events over time, per table, status tiles (?range=1h|24h|7d) --- #}
+<section class="panel ingest-overview" aria-label="Ingestion overview">
+  <div class="panel-header">
+    <h2 class="panel-title">Overview, {{ overview.label }}</h2>
+    <nav class="range-tabs">
+      {% for key in overview.ranges %}
+      <a class="range-tab{% if key == overview.range %} active{% endif %}" href="/ingestion?range={{ key }}">{{ key }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+  <div class="overview-tiles">
+    {% for t in overview.tiles %}
+    <div class="overview-tile">
+      <div class="overview-tile-label">{{ t.label }}</div>
+      <div class="overview-tile-value">{{ t.value }}</div>
+      <div class="overview-tile-detail">{{ t.detail }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="overview-charts">
+    <div class="overview-chart">
+      <h3 class="overview-chart-title">Events over time</h3>
+      {{ overview.line_svg|safe }}
+    </div>
+    <div class="overview-chart">
+      <h3 class="overview-chart-title">Events by table</h3>
+      {{ overview.bar_svg|safe }}
+    </div>
+  </div>
+</section>
+
+{# --- Edit source modal --- #}
+<div id="edit-source-panel" class="panel" style="display:none">
+  <div class="panel-header"><h2 class="panel-title">Edit Source</h2></div>
+  <div class="panel-body">
+    <div class="form-stack">
+      <input type="hidden" id="edit-id">
+      <label>Name
+        <input type="text" class="input" id="edit-name" placeholder="Display name">
+      </label>
+      <label>Kind
+        <input type="text" class="input" id="edit-kind" readonly disabled>
+      </label>
+      <label>Parser
+        <select class="select" id="edit-parser">
+          <option value="auto">auto</option>
+          {% for p in parsers %}
+          <option value="{{ p }}">{{ p }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Target Table
+        <select class="select" id="edit-target">
+          {% for t in tables %}
+          <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div id="edit-kind-config"></div>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+      <button class="btn" onclick="document.getElementById('edit-source-panel').style.display='none'">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add source modal (inline) -->
+<div id="add-source-panel" class="panel" style="display:none">
+  <div class="panel-header"><h2 class="panel-title">Add Source</h2></div>
+  <div class="panel-body">
+    <div class="form-stack">
+      <label>Source ID
+        <input type="text" class="input" id="src-id" placeholder="e.g. syslog-prod">
+      </label>
+      <label>Name
+        <input type="text" class="input" id="src-name" placeholder="Display name">
+      </label>
+      <label>Kind
+        <select class="select" id="src-kind" onchange="onKindChange()">
+          <option value="syslog">syslog UDP/TCP listener</option>
+          <option value="http">HTTP ingest endpoint</option>
+          <option value="file">File tail</option>
+          <option value="testdata">Testdata fetch</option>
+        </select>
+      </label>
+      <div id="kind-config"></div>
+      <label>Parser
+        <select class="select" id="src-parser">
+          <option value="auto">auto</option>
+          {% for p in parsers %}
+          <option value="{{ p }}">{{ p }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Target Table
+        <select class="select" id="src-target">
+          <option value="GenericEvents">GenericEvents</option>
+          <option value="Syslog">Syslog</option>
+          <option value="AuthEvents">AuthEvents</option>
+          <option value="ProcessEvents">ProcessEvents</option>
+          <option value="NetworkEvents">NetworkEvents</option>
+          <option value="WebAccess">WebAccess</option>
+          <option value="FileEvents">FileEvents</option>
+        </select>
+      </label>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-primary" onclick="saveSource()">Save</button>
+      <button class="btn" onclick="document.getElementById('add-source-panel').style.display='none'">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sources -->
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">Sources</h2></div>
+  <div class="panel-body">
+    {% if sources %}
+    <div class="table-scroll">
+    <table class="table">
+      <thead><tr><th>Source</th><th>Kind</th><th>Parser</th><th>Target</th><th>Status</th><th>Running</th><th>Last Event</th><th>Events</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for s in sources %}
+      <tr>
+        <td><code>{{ s.source_id }}</code></td>
+        <td><span class="pill" style="background:var(--color-accent-subtle);color:var(--color-foreground)">{{ s.kind or '—' }}</span></td>
+        <td>{{ s.parser or 'auto' }}</td>
+        <td>{{ s.target_table or 'auto' }}</td>
+        <td><span class="pill pill-status-{{ s.status }}" id="status-{{ s.source_id }}">{{ s.status }}</span></td>
+        <td>
+          {% if s.running %}
+          <span class="pill" style="background:rgba(0,255,0,0.15);color:var(--color-green)">● running</span>
+          {% else %}
+          <span class="pill" style="background:var(--color-accent-subtle);color:var(--color-muted)">✕ stopped</span>
+          {% endif %}
+        </td>
+        <td class="nowrap muted">{{ s.last_event_at or '—' }}</td>
+        <td>{{ s.events_total }}</td>
+        <td>
+          {% if s.running %}
+          <button class="btn btn-sm" onclick="stopSource('{{ s.source_id }}')">Stop</button>
+          {% else %}
+          <button class="btn btn-sm btn-primary" onclick="startSource('{{ s.source_id }}')">Start</button>
+          {% endif %}
+          <button class="btn btn-sm" onclick="editSource('{{ s.source_id }}', {{ s.config | tojson | safe if s.config else '{}' }}, '{{ s.name or '' }}', '{{ s.kind or '' }}', '{{ s.parser or 'auto' }}', '{{ s.target_table or 'GenericEvents' }}')">Edit</button>
+          <button class="btn btn-sm" onclick="deleteSource('{{ s.source_id }}')">Delete</button>
+        </td>
+      </tr>
+      {% if s.last_error %}
+      <tr>
+        <td colspan="9" style="color:var(--color-red);font-size:12px;padding-top:0">{{ s.last_error }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <p>No sources configured. Add a collector or send data to the HTTP ingest endpoint.</p>
+    </div>
+    {% endif %}
+    <div style="margin-top:12px" class="muted">
+      <strong>HTTP endpoint:</strong> POST <code>/api/ingest/{source_id}</code> — JSON object, array, or NDJSON.<br>
+      <strong>Syslog:</strong> UDP/TCP endpoints; start the source above to bind ports.<br>
+      {% for s in sources %}
+      {% if s.kind == 'syslog' and s.config %}
+      <div style="font-size:13px;margin-top:4px">
+        <code>{{ s.source_id }}</code> —
+        {% if s.config is mapping %}
+          {% if s.config.udp_port %}udp://{{ host.split(':')[0] }}:{{ s.config.udp_port }} {% endif %}
+          {% if s.config.tcp_port %}tcp://{{ host.split(':')[0] }}:{{ s.config.tcp_port }} {% endif %}
+        {% endif %}
+      </div>
+      {% elif s.kind == 'http' and s.source_id %}
+      <div style="font-size:13px;margin-top:4px">
+        <code>{{ s.source_id }}</code> — POST /api/ingest/{{ s.source_id }}
+        {% if s.config is mapping and s.config.token %}
+        (token: <code>Authorization: Bearer {{ s.config.token }}</code>)
+        {% endif %}
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Sample log parser detection -->
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">Detect Parser from Sample</h2></div>
+  <div class="panel-body">
+    <textarea class="input" id="sample-lines" rows="4" placeholder="Paste sample log lines here…"></textarea>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-primary" onclick="detectParser()">Detect &amp; Preview</button>
+    </div>
+    <div id="detect-results" style="margin-top:8px; display:none"></div>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">Ingest Filters ({{ filters | length }})</h2></div>
+  <div class="panel-body">
+    {% if filters %}
+    <div class="table-scroll">
+    <table class="table">
+      <thead><tr><th>Table</th><th>Expression</th><th>Description</th><th>Enabled</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for f in filters %}
+      <tr>
+        <td>{{ f.table_name }}</td>
+        <td><code>{{ f.expression }}</code></td>
+        <td>{{ f.description }}</td>
+        <td>
+          <label class="switch">
+            <input type="checkbox" onchange="toggleFilter('{{ f.filter_id }}', this.checked)" {% if f.enabled %}checked{% endif %}>
+            <span class="slider"></span>
+          </label>
+        </td>
+        <td>
+          <button class="btn btn-sm" onclick="testFilter('{{ f.filter_id }}', '{{ f.table_name }}', '{{ f.expression | escape }}')">Test</button>
+          <button class="btn btn-sm" onclick="deleteFilter('{{ f.filter_id }}')">Delete</button>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No filters configured.</p>
+    {% endif %}
+    <div class="form-stack" style="margin-top:12px">
+      <label>Add drop filter (KQL expression; matching rows are dropped)</label>
+      <div class="form-row">
+        <select class="select" id="new-filter-table">
+          <option value="GenericEvents">GenericEvents</option>
+          <option value="Syslog">Syslog</option>
+          <option value="AuthEvents">AuthEvents</option>
+          <option value="ProcessEvents">ProcessEvents</option>
+          <option value="NetworkEvents">NetworkEvents</option>
+          <option value="WebAccess">WebAccess</option>
+        </select>
+        <input type="text" class="input" id="new-filter-expr" placeholder="e.g. EventCode == '4624'">
+        <input type="text" class="input" id="new-filter-desc" placeholder="Description">
+        <button class="btn btn-primary" onclick="addFilter()">Add</button>
+      </div>
+    </div>
+    <div id="filter-test-result" style="margin-top:8px; display:none"></div>
+  </div>
+</div>
+
+<!-- Table stats -->
+{% if table_stats %}
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">Tables</h2></div>
+  <div class="panel-body">
+    <div class="table-scroll">
+    <table class="table">
+      <thead><tr><th>Table</th><th>Rows</th><th>Retention (days)</th></tr></thead>
+      <tbody>
+      {% for t in table_stats %}
+      <tr>
+        <td><code>{{ t.name }}</code></td>
+        <td>{{ t.rows }}</td>
+        <td>
+          <input type="number" class="input input-sm" value="{{ t.retention_days or 30 }}" style="width:70px"
+                 onchange="updateRetention('{{ t.name }}', this.value)">
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<style>
+.switch{position:relative;display:inline-block;width:36px;height:20px}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:rgba(120,120,128,0.25);transition:.2s;border-radius:20px}
+.slider:before{position:absolute;content:"";height:16px;width:16px;left:2px;bottom:2px;background:#fff;transition:.2s;border-radius:50%}
+input:checked + .slider{background:#00FF00}
+input:checked + .slider:before{transform:translateX(16px)}
+</style>
+
+<!-- Agents: onboarding/optimizer panel for the source picked here (scope source). -->
+<div class="panel" id="source-agents-card">
+  <div class="panel-header"><h2 class="panel-title">Agents</h2></div>
+  <div class="panel-body">
+    {% if sources %}
+    <label class="muted" for="source-agent-pick">Source</label>
+    <select class="select select-sm" id="source-agent-pick" aria-label="Source for agent panel">
+      {% for s in sources %}<option value="{{ s.source_id }}">{{ s.name or s.source_id }}</option>{% endfor %}
+    </select>
+    <div id="source-agent-panel" data-agent-scope="source" data-agent-target="{{ sources[0].source_id }}"></div>
+    {% else %}
+    <p class="muted">No sources yet, so there is no source agent to show.</p>
+    {% endif %}
+  </div>
+</div>
+<script src="/static/agent_panel.js"></script>
+<script>
+(function () {
+  var pick = document.getElementById('source-agent-pick');
+  var box = document.getElementById('source-agent-panel');
+  if (!pick || !box) { return; }
+  var mountPick = function () { window.AgentPanel.mount(box, 'source', pick.value); };
+  pick.addEventListener('change', mountPick);
+  mountPick();
+})();
+</script>
+
+<script>
+function showAddSource() { document.getElementById('add-source-panel').style.display='block'; }
+
+function onKindChange() {
+  const kind = document.getElementById('src-kind').value;
+  let html = '';
+  if (kind === 'syslog') {
+    html = '<label>UDP Port<input type="number" class="input" id="cfg-udp" value="5514" min="1024" max="65535"></label>' +
+           '<label>TCP Port<input type="number" class="input" id="cfg-tcp" value="5514" min="1024" max="65535"></label>';
+  } else if (kind === 'http') {
+    html = '<label>Token (optional)<input type="text" class="input" id="cfg-token" placeholder="bearer token"></label>';
+  } else if (kind === 'file') {
+    html = '<label>Path<input type="text" class="input" id="cfg-path" placeholder="/var/log/syslog"></label>';
+  } else if (kind === 'testdata') {
+    html = '<label>URL<input type="text" class="input" id="cfg-url" placeholder="https://..."></label>';
+  }
+  document.getElementById('kind-config').innerHTML = html;
+}
+onKindChange();
+
+async function saveSource() {
+  const kind = document.getElementById('src-kind').value;
+  const config = {};
+  if (kind === 'syslog') { config.udp_port = parseInt(document.getElementById('cfg-udp').value); config.tcp_port = parseInt(document.getElementById('cfg-tcp').value); }
+  else if (kind === 'http') { config.token = document.getElementById('cfg-token').value; }
+  else if (kind === 'file') { config.path = document.getElementById('cfg-path').value; }
+  else if (kind === 'testdata') { config.url = document.getElementById('cfg-url').value; }
+  const payload = {
+    source_id: document.getElementById('src-id').value,
+    name: document.getElementById('src-name').value,
+    kind,
+    parser: document.getElementById('src-parser').value,
+    target_table: document.getElementById('src-target').value,
+    config
+  };
+  try {
+    const r = await fetch('/api/sources', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await r.json();
+    if (data.ok) location.reload();
+    else alert('Failed: ' + (data.error||'') + (data.details ? '\n' + JSON.stringify(data.details) : ''));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Edit ---
+function editSource(sourceId, config, name, kind, parser, targetTable) {
+  document.getElementById('edit-id').value = sourceId;
+  document.getElementById('edit-name').value = name;
+  document.getElementById('edit-kind').value = kind;
+  document.getElementById('edit-parser').value = parser;
+  document.getElementById('edit-target').value = targetTable || 'GenericEvents';
+  let html = '';
+  if (kind === 'syslog') {
+    html = '<label>UDP Port<input type="number" class="input" id="edit-udp" value="'+(config&&config.udp_port?config.udp_port:5514)+'" min="1024" max="65535"></label>' +
+           '<label>TCP Port<input type="number" class="input" id="edit-tcp" value="'+(config&&config.tcp_port?config.tcp_port:5514)+'" min="1024" max="65535"></label>';
+  } else if (kind === 'http') {
+    html = '<label>Token<input type="text" class="input" id="edit-token" value="'+(config&&config.token?config.token:'')+'" placeholder="bearer token"></label>';
+  } else if (kind === 'file') {
+    html = '<label>Path<input type="text" class="input" id="edit-path" value="'+(config&&config.path?config.path:'')+'" placeholder="/var/log/syslog"></label>';
+  }
+  document.getElementById('edit-kind-config').innerHTML = html;
+  document.getElementById('edit-source-panel').style.display='block';
+}
+
+async function saveEdit() {
+  const id = document.getElementById('edit-id').value;
+  const kind = document.getElementById('edit-kind').value;
+  const config = {};
+  if (kind === 'syslog') { config.udp_port = parseInt(document.getElementById('edit-udp').value); config.tcp_port = parseInt(document.getElementById('edit-tcp').value); }
+  else if (kind === 'http') { config.token = document.getElementById('edit-token').value; }
+  else if (kind === 'file') { config.path = document.getElementById('edit-path').value; }
+  const payload = {
+    name: document.getElementById('edit-name').value,
+    parser: document.getElementById('edit-parser').value,
+    target_table: document.getElementById('edit-target').value,
+    config
+  };
+  try {
+    const r = await fetch('/api/sources/'+id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await r.json();
+    if (data.ok) location.reload();
+    else alert('Failed: ' + (data.error||'') + (data.details ? '\n' + JSON.stringify(data.details) : ''));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Runtime control ---
+async function startSource(id) {
+  try { const r = await fetch('/api/sources/'+id+'/start', {method:'POST'}); const data = await r.json(); if(data.ok) location.reload(); else alert('Start failed: '+(data.error||'')); }
+  catch(e) { alert(e); }
+}
+async function stopSource(id) {
+  try { const r = await fetch('/api/sources/'+id+'/stop', {method:'POST'}); const data = await r.json(); if(data.ok) location.reload(); else alert('Stop failed: '+(data.error||'')); }
+  catch(e) { alert(e); }
+}
+
+async function deleteSource(id) {
+  if (!confirm('Delete source ' + id + '?')) return;
+  try { const r = await fetch('/api/sources/' + id + '/delete', {method:'POST'}); if ((await r.json()).ok) location.reload(); }
+  catch(e) { alert(e); }
+}
+
+// --- Filters ---
+async function toggleFilter(id, enabled) {
+  try {
+    const r = await fetch('/api/filters/'+id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled})});
+    const data = await r.json();
+    if (!data.ok) alert('Filter update failed: '+(data.error||''));
+  } catch(e) { alert(e); }
+}
+
+async function addFilter() {
+  const payload = {
+    table_name: document.getElementById('new-filter-table').value,
+    expression: document.getElementById('new-filter-expr').value,
+    description: document.getElementById('new-filter-desc').value,
+    enabled: true
+  };
+  try {
+    const r = await fetch('/api/filters', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await r.json();
+    if (data.ok) location.reload();
+    else alert('Failed: ' + (data.error||''));
+  } catch(e) { alert(e); }
+}
+
+async function testFilter(id, table, expr) {
+  try {
+    const r = await fetch('/api/filters/test', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({table_name:table,expression:expr})});
+    const data = await r.json();
+    const div = document.getElementById('filter-test-result');
+    div.style.display = 'block';
+    if (data.ok) div.innerHTML = '<span class="pill">' + data.row_count + ' rows would match</span>';
+    else div.innerHTML = '<span class="pill pill-status-closed">Error: ' + data.error + '</span>';
+  } catch(e) { alert(e); }
+}
+
+async function deleteFilter(id) {
+  if (!confirm('Delete filter?')) return;
+  try { const r = await fetch('/api/filters/' + id + '/delete', {method:'POST'}); if ((await r.json()).ok) location.reload(); }
+  catch(e) { alert(e); }
+}
+
+async function updateRetention(table, days) {
+  try {
+    await fetch('/api/ingestion/retention', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({table_name: table, retention_days: parseInt(days)})
+    });
+  } catch(e) {}
+}
+
+async function detectParser() {
+  const lines = document.getElementById('sample-lines').value.trim().split('\n').filter(Boolean);
+  if (!lines.length) return;
+  try {
+    const r = await fetch('/api/sources/detect-parser', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({samples:lines})});
+    const data = await r.json();
+    const div = document.getElementById('detect-results');
+    div.style.display = 'block';
+    if (data.candidates && data.candidates.length) {
+      div.innerHTML = '<ul>' + data.candidates.map(c => '<li><strong>' + c.parser + '</strong> — ' + c.parsed_count + ' rows parsed, fields: ' + c.fields.join(', ') + '</li>').join('') + '</ul>';
+    } else {
+      div.innerHTML = '<p class="muted">No parser matched the sample lines.</p>';
+    }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+</script>
+{% endblock %}

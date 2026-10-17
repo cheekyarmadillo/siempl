@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }} — siempl</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/favicon-180.png" type="image/png" sizes="180x180">
+<link rel="apple-touch-icon" href="/static/favicon-180.png">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark light">
+<style>html{background:#000;color-scheme:dark}html[data-theme="light"]{background:#fff;color-scheme:light}</style>
+<script>
+// runs before first paint: resolve theme from storage (default dark) so there is no flash
+(function(){try{var t=localStorage.getItem("siempl-theme");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark")}catch(e){}})();
+</script>
+<link rel="stylesheet" href="/static/siempl.css">
+<script src="/static/htmx.min.js"></script>
+</head>
+<body class="siempl-body">
+
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <span class="sidebar-logo" role="img" aria-label="siempl"></span>
+      <span class="sidebar-title">siempl</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/" class="sidebar-item {% if page == 'overview' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3 12H9M15 12H21" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Overview</span>
+      </a>
+      <a href="/logs" class="sidebar-item {% if page == 'logs' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="8" y1="8" x2="16" y2="8" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="12" x2="16" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="16" x2="12" y2="16" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Logs</span>
+        <span class="attn-dot" data-portal="logs" hidden title="" role="img"></span>
+      </a>
+      <a href="/alerts" class="sidebar-item {% if page == 'alerts' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M6 20C6 16.69 8.69 14 12 14S18 16.69 18 20" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="12" y1="8" x2="12" y2="3" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Alerts</span>
+        <span class="attn-dot" data-portal="alerts" hidden title="" role="img"></span>
+      </a>
+      <a href="/rules" class="sidebar-item {% if page == 'rules' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        <span>Rules</span>
+        <span class="attn-dot" data-portal="rules" hidden title="" role="img"></span>
+      </a>
+      <a href="/entities" class="sidebar-item {% if page == 'entities' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="9" cy="7" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="15" cy="17" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="10.5" y1="9" x2="13.5" y2="15" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Entities</span>
+      </a>
+      <a href="/ingestion" class="sidebar-item {% if page == 'ingestion' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><path d="M21 15V19A2 2 0 0119 21H5A2 2 0 013 19V15" stroke="currentColor" stroke-width="1.5" fill="none"/><polyline points="17,8 12,3 7,8" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Ingestion</span>
+        <span class="attn-dot" data-portal="ingestion" hidden title="" role="img"></span>
+      </a>
+      <a href="/agents" class="sidebar-item {% if page == 'agents' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="12" cy="12" r="2" fill="currentColor"/><line x1="8" y1="12" x2="3" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="16" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Agents</span>
+        <span class="attn-dot" data-portal="agents" hidden title="" role="img"></span>
+      </a>
+      <a href="/audit" class="sidebar-item {% if page == 'audit' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="1.5" fill="none"/><polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="1.5" fill="none"/><line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Audit</span>
+      </a>
+      <a href="/samples" class="sidebar-item {% if page == 'samples' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        <span>Samples</span>
+      </a>
+      <a href="/settings" class="sidebar-item {% if page == 'settings' %}active{% endif %}">
+        <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Settings</span>
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">
+        <svg class="nav-icon sun-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" stroke-width="1.5"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" stroke-width="1.5"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" stroke-width="1.5"/><line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" stroke-width="1.5"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" stroke-width="1.5"/></svg>
+        <svg class="nav-icon moon-icon" viewBox="0 0 24 24" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      <span class="sidebar-version">v0.1</span>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main-content" id="main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+</div>
+
+<script>
+// ---- theme toggle ----
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('siempl-theme', next);
+  updateThemeIcon(next);
+}
+function updateThemeIcon(theme) {
+  const sun = document.querySelector('.sun-icon');
+  const moon = document.querySelector('.moon-icon');
+  if (sun && moon) {
+    sun.style.display = theme === 'dark' ? 'none' : '';
+    moon.style.display = theme === 'dark' ? '' : 'none';
+  }
+}
+updateThemeIcon(document.documentElement.getAttribute("data-theme") || "dark");
+
+// ---- confirmation sheet helper ----
+function confirmAction(msg, cb) {
+  if (confirm(msg)) cb();
+}
+
+// ---- switch toggle ----
+function toggleSetting(key, el) {
+  const checked = el.checked;
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({[key]: checked})
+  }).then(r => r.json()).then(data => {
+    if (!data.ok) { el.checked = !checked; alert('Failed to update setting'); }
+  });
+}
+
+// ---- segmented control ----
+document.querySelectorAll('.segmented-control button').forEach(btn => {
+  btn.addEventListener('click', function() {
+    this.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// ---- KQL editor keyboard shortcut ----
+document.addEventListener('keydown', function(e) {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    const runBtn = document.getElementById('run-query-btn');
+    if (runBtn && document.activeElement && document.activeElement.id === 'kql-editor') {
+      runBtn.click();
+    }
+  }
+});
+</script>
+
+<script src="/static/attention.js"></script>
+</body>
+</html>

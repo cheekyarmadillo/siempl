@@ -1,0 +1,174 @@
+<!-- Entity detail page -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <a href="/entities" class="link back-link">← Back to Entities</a>
+  <h1>{{ entity.value }}</h1>
+  <div class="alert-meta">
+    <span class="pill">{{ entity.type }}</span>
+    <div class="reputation-bar" style="width:120px">
+      <div class="reputation-fill {% if entity.reputation > 70 %}rep-high{% elif entity.reputation > 40 %}rep-med{% else %}rep-low{% endif %}" style="width:{{ entity.reputation }}%"></div>
+      <span class="reputation-label">rep {{ "%.0f" | format(entity.reputation) }}</span>
+    </div>
+    <span class="muted">{{ entity.alert_count }} alerts · {{ entity.event_count }} events · Last: <span title="{{ entity.last_seen or '' }}">{{ entity._reltime }}</span></span>
+  </div>
+</div>
+
+<div class="detail-grid">
+  <div class="detail-main">
+    <!-- Entity info -->
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Info</h2></div>
+      <div class="panel-body">
+        <dl class="dl-grid">
+          <dt>Type</dt><dd>{{ entity.type }}</dd>
+          <dt>Value</dt><dd><code>{{ entity.value }}</code></dd>
+          <dt>First Seen</dt><dd>{{ entity.first_seen or '—' }}</dd>
+          <dt>Last Seen</dt><dd>{{ entity.last_seen or '—' }} ({{ entity._reltime }})</dd>
+          <dt>Reputation</dt><dd>{{ "%.1f" | format(entity.reputation) }}</dd>
+          <dt>TP Count</dt><dd>{{ entity.tp_count }}</dd>
+          <dt>FP Count</dt><dd>{{ entity.fp_count }}</dd>
+          <dt>Tables</dt>
+          <dd>
+            {% for t in entity._tables %}<span class="pill pill-sm">{{ t }}</span>{% else %}—{% endfor %}
+          </dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Notes</h2></div>
+      <div class="panel-body">
+        <textarea id="entity-notes" class="input" rows="4">{{ entity.notes or '' }}</textarea>
+        <button class="btn btn-primary" onclick="saveNotes()" style="margin-top:8px">Save Notes</button>
+      </div>
+    </div>
+
+    <!-- Related alerts -->
+    {% if related_alerts %}
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Related Alerts ({{ related_alerts | length }})</h2></div>
+      <div class="panel-body">
+        <div class="table-scroll">
+          <table class="table table-sm">
+            <thead><tr><th>Created</th><th>Title</th><th>Severity</th><th>Status</th></tr></thead>
+            <tbody>
+            {% for a in related_alerts %}
+            <tr>
+              <td class="nowrap">{{ a.created_at }}</td>
+              <td><a href="/alerts/{{ a.alert_id }}" class="link">{{ a.title or a.alert_id[:16] }}</a></td>
+              <td><span class="badge badge-{{ severity_class.get(a.severity, 'sev-info') }}">{{ a.severity }}</span></td>
+              <td><span class="pill pill-status-{{ a.status }}">{{ a.status }}</span></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Verdict history -->
+    {% if verdict_history %}
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Verdict History</h2></div>
+      <div class="panel-body">
+        <div class="table-scroll">
+          <table class="table table-sm">
+            <thead><tr><th>Alert</th><th>Verdict</th><th>By</th><th>Time</th></tr></thead>
+            <tbody>
+            {% for v in verdict_history %}
+            <tr>
+              <td><a href="/alerts/{{ v.alert_id }}" class="link">{{ v.alert_id[:16] }}</a></td>
+              <td><span class="pill">{{ v.verdict }}</span></td>
+              <td>{{ v.verdict_by or '—' }}</td>
+              <td class="nowrap">{{ v.updated_at }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Related entities graph -->
+    {% if related_entities %}
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Related Entities</h2></div>
+      <div class="panel-body">
+        <div class="entity-graph">
+          <svg viewBox="0 0 500 200" width="100%" height="200">
+            <circle cx="250" cy="100" r="20" fill="var(--color-accent)" opacity="0.2" stroke="var(--color-accent)" stroke-width="2"/>
+            <text x="250" y="104" text-anchor="middle" font-size="9" fill="var(--color-foreground)">{{ entity.value[:12] }}</text>
+            {% for e in related_entities[:8] %}
+            <line x1="250" y1="100" x2="{{ e._gx }}" y2="{{ e._gy }}" stroke="var(--color-border)" stroke-width="1"/>
+            <circle cx="{{ e._gx }}" cy="{{ e._gy }}" r="14" fill="var(--color-card)" stroke="var(--color-border)" stroke-width="1"/>
+            <text x="{{ e._gx }}" y="{{ e._gy + 4 }}" text-anchor="middle" font-size="8" fill="var(--color-muted)">{{ e.value[:10] }}</text>
+            <text x="{{ e._gx }}" y="{{ e._gy + 18 }}" text-anchor="middle" font-size="7" fill="var(--color-muted)">{{ e.relation }}</text>
+            {% endfor %}
+          </svg>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="detail-sidebar">
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Actions</h2></div>
+      <div class="panel-body">
+        <div class="action-grid">
+          <label class="switch-row">
+            <span>Watch</span>
+            <label class="switch">
+              <input type="checkbox" {% if entity.watch %}checked{% endif %} onchange="toggleWatch()">
+              <span class="switch-slider"></span>
+            </label>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    {% if recent_events %}
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Recent Events</h2></div>
+      <div class="panel-body">
+        <div class="table-scroll">
+          <table class="table table-sm">
+            {% set cols = recent_events[0].keys() | list if recent_events else [] %}
+            <thead><tr>{% for c in cols[:6] %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for ev in recent_events %}
+            <tr>{% for c in cols[:6] %}<td>{{ ev.get(c, '') | string | truncate(30) }}</td>{% endfor %}</tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+async function toggleWatch() {
+  try {
+    const r = await fetch('/api/entities/{{ entity.entity_id | urlencode }}/watch', {method:'PUT'});
+    if ((await r.json()).ok) location.reload();
+  } catch(e) { alert('Error'); }
+}
+async function saveNotes() {
+  const notes = document.getElementById('entity-notes').value;
+  try {
+    const r = await fetch('/api/entities/{{ entity.entity_id | urlencode }}/notes', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({notes})
+    });
+    if ((await r.json()).ok) alert('Saved ✓');
+  } catch(e) { alert('Error'); }
+}
+</script>
+{% endblock %}

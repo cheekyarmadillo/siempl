@@ -1,0 +1,74 @@
+<!-- Sample data page -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Sample Data</h1>
+  <p class="page-subtitle">Load realistic sample incidents, alerts, rules, and entities for testing agents.</p>
+</div>
+
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">Actions</h2></div>
+  <div class="panel-body">
+    <div class="action-grid" style="gap: 12px;">
+      <button class="btn btn-primary" onclick="loadSamples()">Load sample data</button>
+      <button class="btn btn-danger" onclick="clearSamples()">Clear sample data</button>
+      <button class="btn btn-primary" onclick="scenarioCall('POST')">Load scenarios</button>
+      <button class="btn btn-danger" onclick="scenarioCall('DELETE')">Reset scenarios</button>
+    </div>
+    <div id="sample-result" style="margin-top: 12px; font-family: monospace; white-space: pre-wrap;"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">What gets loaded</h2></div>
+  <div class="panel-body">
+    <ul class="list">
+      <li><strong>~8 rules</strong> — including 2 intentionally noisy rules for tuning, 1 disabled, 1 temporary, 1 on an empty table, 1 on a rarely-queried table</li>
+      <li><strong>~25 alerts</strong> — mix of new/active/closed-TP/closed-FP, and unknown verdicts</li>
+      <li><strong>3 incidents</strong> — kill-chain, closed FP campaign, empty placeholder</li>
+      <li><strong>20 entities</strong> — varied reputations, one watch-listed</li>
+      <li><strong>Raw logs</strong> — unparsed acme-vpn and custom-app lines for the onboarding agent</li>
+      <li><strong>Table usage skew</strong> — optimizer data: huge noisy table, small heavily-queried table</li>
+      <li><strong>Recommendations</strong> — open ingest_filter, retention, and rule_disable recommendations</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+async function loadSamples() {
+  const res = document.getElementById('sample-result');
+  res.textContent = 'Loading...';
+  try {
+    const r = await fetch('/api/testdata/samples', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({seed:42})});
+    const data = await r.json();
+    res.textContent = JSON.stringify(data, null, 2);
+  } catch(e) {
+    res.textContent = 'Error: ' + e;
+  }
+}
+async function clearSamples() {
+  if (!confirm('Remove all sample data?')) return;
+  const res = document.getElementById('sample-result');
+  res.textContent = 'Clearing...';
+  try {
+    const r = await fetch('/api/testdata/samples/clear', {method:'POST'});
+    const data = await r.json();
+    res.textContent = JSON.stringify(data, null, 2);
+  } catch(e) {
+    res.textContent = 'Error: ' + e;
+  }
+}
+async function scenarioCall(method) {
+  if (method === 'DELETE' && !confirm('Remove all scenario rows (scn-* sources, scn_* rules)?')) return;
+  const res = document.getElementById('sample-result');
+  res.textContent = method === 'POST' ? 'Loading scenarios...' : 'Resetting scenarios...';
+  try {
+    const r = await fetch('/api/samples/scenarios', {method: method});
+    const data = await r.json();
+    res.textContent = JSON.stringify(data, null, 2);
+  } catch(e) {
+    res.textContent = 'Error: ' + e;
+  }
+}
+</script>
+{% endblock %}

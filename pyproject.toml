@@ -1,0 +1,39 @@
+[project]
+name = "siempl"
+version = "0.1.0"
+description = "siempl - an agentic SIEM (DuckDB + KQL + FastAPI/HTMX + OpenRouter agents)"
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["duckdb", "fastapi", "uvicorn[standard]", "jinja2", "pydantic", "pyyaml", "lark", "httpx", "python-multipart", "pytest-asyncio", "pytz", "pysigma", "pysigma-backend-sqlite"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["siempl*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.html", "*.css", "*.js", "*.svg", "*.png", "*.yml", "*.yaml", "*.json", "*.lark", "*.md", "*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "B", "UP", "SIM", "BLE", "S110", "S112", "RET", "C4", "PIE"]
+# Ratchet: these have known existing violations (see docs/STANDARDS.md). Remove
+# an entry from this list once its count reaches zero. Never add to it.
+ignore = ["E501", "BLE001", "SIM105", "SIM102", "SIM108", "SIM114", "RET503", "RET504",
+          "B007", "B905", "B023", "B904", "UP031", "E702", "E701", "E741", "E402", "C416", "C401", "PIE810"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports
+"tests/*" = ["S110", "S112"]    # fixtures tolerate missing tables on purpose
+"scripts/*" = ["S110", "S112"]  # one-off tooling

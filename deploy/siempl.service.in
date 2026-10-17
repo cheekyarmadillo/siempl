@@ -1,0 +1,16 @@
+[Unit]
+Description=siempl - agentic SIEM (DuckDB + KQL + FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@PYTHON@ -m siempl --port @PORT@ @EXTRA_ARGS@
+Restart=on-failure
+RestartSec=5
+# Data lives under SIEMPL_HOME (default: <repo>/data); override here to keep it elsewhere.
+# Environment=SIEMPL_HOME=%h/siempl-data
+
+[Install]
+WantedBy=default.target

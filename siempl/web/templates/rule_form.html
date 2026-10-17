@@ -1,0 +1,132 @@
+<!-- Rule create/edit form -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <a href="/rules" class="link back-link">← Back to Rules</a>
+  <h1>{% if rule %}Edit Rule{% else %}New Rule{% endif %}</h1>
+</div>
+
+<div class="detail-grid">
+  <div class="detail-main">
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Rule Details</h2></div>
+      <div class="panel-body">
+        <div class="form-stack">
+          <label>Name
+            <input type="text" class="input" id="r-name" value="{{ rule.name if rule else '' }}">
+          </label>
+          <label>Severity
+            <select class="select" id="r-severity">
+              {% for s in ['informational','low','medium','high','critical'] %}
+              <option value="{{ s }}" {% if rule and rule.severity == s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Description (for triage agent)
+            <textarea class="input" id="r-description" rows="3">{{ rule.description if rule else '' }}</textarea>
+          </label>
+          <label>Triage Steps
+            <textarea class="input" id="r-triage_steps" rows="4">{{ rule.triage_steps if rule else '' }}</textarea>
+          </label>
+          <label>KQL Query
+            <textarea class="kql-editor" id="r-query" rows="8">{{ rule.query if rule else '' }}</textarea>
+          </label>
+          <div class="form-row">
+            <label>Frequency (min)
+              <input type="number" class="input" id="r-frequency" value="{{ rule.frequency_minutes if rule else 5 }}" style="width:100px">
+            </label>
+            <label>Lookback (min)
+              <input type="number" class="input" id="r-lookback" value="{{ rule.lookback_minutes if rule else 5 }}" style="width:100px">
+            </label>
+            <label>Threshold
+              <input type="number" class="input" id="r-threshold" value="{{ rule.threshold if rule else 1 }}" style="width:100px">
+            </label>
+          </div>
+          <label>MITRE Techniques (comma-separated)
+            <input type="text" class="input" id="r-mitre" value="{% if rule and rule.mitre_techniques %}{{ rule.mitre_techniques | join(', ') }}{% endif %}">
+          </label>
+          <label>Enabled
+            <label class="switch" style="margin-top:4px">
+              <input type="checkbox" id="r-enabled" {% if not rule or rule.enabled %}checked{% endif %}>
+              <span class="switch-slider"></span>
+            </label>
+          </label>
+          <label>Expires (optional, YYYY-MM-DD)
+            <input type="date" class="input" id="r-expires" value="{{ rule.expires_at[:10] if rule and rule.expires_at else '' }}">
+          </label>
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-primary" onclick="saveRule()">Save</button>
+          <button class="btn" onclick="testQuery()">Test Query</button>
+        </div>
+        <div id="test-results" style="display:none; margin-top:12px" class="panel">
+          <div class="panel-header"><span id="test-summary"></span></div>
+          <div class="panel-body"><div class="table-scroll"><table class="table table-sm" id="test-table"></table></div></div>
+        </div>
+        <div id="test-error" class="query-error" style="display:none; margin-top:8px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="detail-sidebar">
+    <div class="panel">
+      <div class="panel-header"><h2 class="panel-title">Import rule</h2></div>
+      <div class="panel-body">
+        <p class="muted">Sigma, Microsoft Sentinel, or KQL can be imported from one place. Imports are created disabled.</p>
+        <a href="/rules?import=1" class="btn">Open import dialog</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function saveRule() {
+  const payload = {
+    name: document.getElementById('r-name').value,
+    severity: document.getElementById('r-severity').value,
+    description: document.getElementById('r-description').value,
+    triage_steps: document.getElementById('r-triage_steps').value,
+    query: document.getElementById('r-query').value,
+    frequency_minutes: parseInt(document.getElementById('r-frequency').value) || 5,
+    lookback_minutes: parseInt(document.getElementById('r-lookback').value) || 5,
+    threshold: parseInt(document.getElementById('r-threshold').value) || 1,
+    mitre_techniques: document.getElementById('r-mitre').value.split(',').map(s=>s.trim()).filter(Boolean),
+    enabled: document.getElementById('r-enabled').checked,
+    expires_at: document.getElementById('r-expires').value || undefined,
+  };
+  const isEdit = {% if rule %}true{% else %}false{% endif %};
+  const url = isEdit ? '/api/rules/{{ rule.rule_id if rule else "" }}' : '/api/rules';
+  const method = isEdit ? 'PUT' : 'POST';
+  try {
+    const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const data = await r.json();
+    if (data.ok) location.href = '/rules' + (data.rule_id ? '/' + data.rule_id : '');
+    else alert('Error: ' + (data.error || 'unknown'));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function testQuery() {
+  const query = document.getElementById('r-query').value;
+  document.getElementById('test-error').style.display = 'none';
+  document.getElementById('test-results').style.display = 'none';
+  try {
+    const r = await fetch('/api/rules/test-query', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query})});
+    const data = await r.json();
+    if (data.error) {
+      document.getElementById('test-error').textContent = data.error;
+      document.getElementById('test-error').style.display = 'block';
+      return;
+    }
+    document.getElementById('test-results').style.display = 'block';
+    document.getElementById('test-summary').textContent = data.row_count + ' rows, ' + data.elapsed_ms.toFixed(0) + 'ms';
+    const table = document.getElementById('test-table');
+    let h = '<thead><tr>' + data.columns.map(c=>'<th>'+c+'</th>').join('') + '</tr></thead><tbody>';
+    if (!data.rows.length) h += '<tr><td colspan="'+data.columns.length+'" class="muted">No rows</td></tr>';
+    else h += data.rows.map(row => '<tr>'+row.map(c=>'<td>'+(c??'')+'</td>').join('')+'</tr>').join('');
+    h += '</tbody>';
+    table.innerHTML = h;
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+</script>
+{% endblock %}

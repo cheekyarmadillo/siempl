@@ -1,0 +1,109 @@
+{# Overview page: one screen at 1440x900, no page scroll. Panels scroll internally. Data: _overview_data; charts: routes_overview #}
+{% extends "base.html" %}
+{% block content %}
+<div class="ov-screen">
+  <header class="ov-head">
+    <h1 class="ov-title">Overview</h1>
+    <span class="ov-sub">{{ data.label }}, per {{ data.bucket_label }}</span>
+    <nav class="range-tabs ov-range" aria-label="Time range">
+      {% for key in data.ranges %}
+      <a class="range-tab{% if key == data.range %} active{% endif %}" href="/?range={{ key }}">{{ key }}</a>
+      {% endfor %}
+    </nav>
+  </header>
+
+  <section class="ov-kpis" aria-label="Key figures">
+    {% for t in data.tiles %}
+    <div class="ov-kpi{% if t.warn %} ov-kpi-warn{% endif %}">
+      <span class="ov-kpi-label">{{ t.label }}</span>
+      <span class="ov-kpi-value">{{ t.value }}</span>
+      <span class="ov-kpi-detail">{{ t.detail }}</span>
+    </div>
+    {% endfor %}
+  </section>
+
+  <div class="ov-grid">
+    <section class="ov-panel ov-span-2">
+      <h2 class="ov-panel-title">Events per {{ data.bucket_label }}</h2>
+      <div class="ov-chart">{{ charts.events | safe }}</div>
+    </section>
+    <section class="ov-panel">
+      <h2 class="ov-panel-title">Open alerts by severity</h2>
+      <div class="ov-pie">
+        <div class="ov-chart ov-chart-pie">{{ charts.pie | safe }}</div>
+        <ul class="ov-legend">
+          {% for sev, n in data.open_by_severity.items() %}
+          <li><span class="legend-swatch" style="background:var(--chart-{{ sev }})"></span>{{ sev }} <b>{{ n }}</b></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+    <section class="ov-panel">
+      <h2 class="ov-panel-title">Source health</h2>
+      <dl class="ov-list">
+        <div><dt>Active</dt><dd>{{ data.sources.active }}</dd></div>
+        <div><dt>In error</dt><dd class="{% if data.sources.error %}ov-bad{% endif %}">{{ data.sources.error }}</dd></div>
+        <div><dt>Stale (no event in 1h)</dt><dd>{{ data.sources.stale }}</dd></div>
+        {% for status, n in data.sources.by_status.items() %}
+        <div><dt>Status: {{ status or "unknown" }}</dt><dd>{{ n }}</dd></div>
+        {% endfor %}
+      </dl>
+    </section>
+    <section class="ov-panel ov-span-2">
+      <h2 class="ov-panel-title">Alerts created per {{ data.bucket_label }}, by severity</h2>
+      <div class="ov-chart">{{ charts.stacked | safe }}</div>
+    </section>
+    <section class="ov-panel">
+      <h2 class="ov-panel-title">Top rules by alerts ({{ data.label }})</h2>
+      <div class="ov-chart">{{ charts.rules | safe }}</div>
+    </section>
+    <section class="ov-panel">
+      <h2 class="ov-panel-title">Top entities by reputation</h2>
+      <div class="ov-scroll">
+        {% for e in data.top_entities %}
+        <div class="ov-row">
+          <span class="pill">{{ e.type }}</span>
+          <a class="ov-grow" href="/entities/{{ e.entity_id | urlencode }}" title="{{ e.value }}">{{ e.value }}</a>
+          <span class="ov-num">{{ "%.0f" | format(e.reputation) }}</span>
+        </div>
+        {% else %}
+        <p class="ov-empty">No entities yet.</p>
+        {% endfor %}
+      </div>
+    </section>
+    <section class="ov-panel">
+      <h2 class="ov-panel-title">Events by table ({{ data.label }})</h2>
+      <div class="ov-scroll"><div class="ov-chart">{{ charts.tables | safe }}</div></div>
+    </section>
+    <section class="ov-panel ov-span-2">
+      <h2 class="ov-panel-title">Recent agent runs</h2>
+      <div class="ov-scroll">
+        <table class="table ov-table">
+          <thead><tr><th>Started</th><th>Agent</th><th>Status</th><th>Summary</th></tr></thead>
+          <tbody>
+          {% for run in data.recent_runs %}
+          <tr>
+            <td class="ov-nowrap">{{ run.started or "-" }}</td>
+            <td class="ov-nowrap">{{ run.agent }}</td>
+            <td><span class="ov-status ov-status-{{ run.status }}">{{ run.status or "-" }}</span></td>
+            <td class="ov-clip" title="{{ run.summary }}">{{ run.summary }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="ov-empty">No agent runs yet.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="ov-panel">
+      <h2 class="ov-panel-title">AI spend and approvals</h2>
+      <dl class="ov-list">
+        <div><dt>Spend today</dt><dd>${{ "%.2f" | format(data.ai.today_usd) }}</dd></div>
+        <div><dt>Lifetime spend</dt><dd>${{ "%.2f" | format(data.ai.total_usd) }} of ${{ "%.2f" | format(data.ai.budget_usd) }}</dd></div>
+        <div><dt>Pending approvals</dt><dd>{{ data.pending }}</dd></div>
+      </dl>
+      <div class="ov-meter" role="meter" aria-label="Lifetime AI budget used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ "%.0f" | format(data.ai.used_pct) }}"><span style="width:{{ "%.0f" | format(data.ai.used_pct) }}%"></span></div>
+    </section>
+  </div>
+</div>
+{% endblock %}

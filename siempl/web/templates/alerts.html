@@ -1,0 +1,130 @@
+<!-- Alerts list: charts, filters, table with inline status/severity controls, bulk actions and a preview drawer.
+     All writes go through alerts.js -> /api/alerts/{id}/status|severity. -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Alerts</h1>
+  <p class="page-subtitle">{{ total }} {{ 'alert' if total == 1 else 'alerts' }} match</p>
+</div>
+
+{% include "alerts_charts.html" %}
+
+<form class="filter-bar" method="get" action="/alerts" id="alert-filters">
+  <select class="select" name="severity" aria-label="Severity" data-autosubmit>
+    <option value="">All severities</option>
+    {% for val, label in severity_choices %}
+    <option value="{{ val }}" {% if filters.severity == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select class="select" name="status" aria-label="Status" data-autosubmit>
+    {% for val, label in status_choices %}
+    <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <input class="input" type="search" name="q" value="{{ filters.q }}" placeholder="Search titles" aria-label="Search titles">
+  <input type="hidden" name="sort" value="{{ filters.sort }}">
+  <input type="hidden" name="dir" value="{{ filters.dir }}">
+  {% if rule_chip %}<input type="hidden" name="rule" value="{{ filters.rule }}">{% endif %}
+  <button class="btn btn-sm" type="submit">Filter</button>
+  <a href="/alerts" class="btn btn-sm">Clear</a>
+</form>
+
+{% if rule_chip %}
+<p class="rule-chip-row">
+  <span class="chip rule-chip">Rule: {{ rule_chip.name }} <a href="{{ rule_clear_url }}" aria-label="Clear rule filter">x</a></span>
+</p>
+{% endif %}
+
+<!-- Bulk actions: apply to every checked row via the same JSON API as the row controls. -->
+<div class="bulk-bar" id="bulk-bar">
+  <span class="muted" id="bulk-count">0 selected</span>
+  <select class="select select-sm" id="bulk-status" aria-label="Bulk status">
+    <option value="">Set status…</option>
+    {% for val, label in status_choices if val in ('new', 'active', 'closed_tp', 'closed_fp') %}
+    <option value="{{ val }}">{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-sm" type="button" id="bulk-status-apply">Apply status</button>
+  <select class="select select-sm" id="bulk-severity" aria-label="Bulk severity">
+    <option value="">Set severity…</option>
+    {% for val, label in severity_choices %}
+    <option value="{{ val }}">{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-sm" type="button" id="bulk-severity-apply">Apply severity</button>
+  <span class="muted" id="bulk-result" role="status"></span>
+</div>
+
+<!-- Carries the ?preview=<alert_id> deep link to alerts.js; the value is escaped by Jinja. -->
+<div id="alerts-page" data-preview-id="{{ preview_id }}"></div>
+<div id="alerts-flash" class="alerts-flash" role="alert" hidden></div>
+
+{% if rows %}
+<div class="table-scroll">
+<table class="table alerts-table" id="alerts-table">
+  <thead>
+    <tr>
+      <th class="col-check"><input type="checkbox" id="select-all" aria-label="Select all alerts on this page"></th>
+      <th class="col-number"><a href="{{ sort_heads.number.url }}" class="sort-link">#{{ sort_heads.number.arrow }}</a></th>
+      <th>Severity</th>
+      <th>Title</th>
+      <th>Rule</th>
+      <th>Status</th>
+      <th><a href="{{ sort_heads.created.url }}" class="sort-link">Created{{ sort_heads.created.arrow }}</a></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for a in rows %}
+    <tr class="alert-row" data-alert-id="{{ a.alert_id }}">
+      <td class="col-check"><input type="checkbox" class="alert-sel" value="{{ a.alert_id }}" aria-label="Select alert {{ a.alert_number or a.alert_id[:8] }}"></td>
+      <td class="nowrap mono">#{{ a.alert_number or '—' }}</td>
+      <td>
+        <select class="select select-sm sev-select sev-{{ a.severity }}" data-alert-field="severity"
+                data-alert-id="{{ a.alert_id }}" aria-label="Severity">
+          {% for val, label in severity_choices %}
+          <option value="{{ val }}" {% if a.severity == val %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td><a href="/alerts/{{ a.alert_id }}" class="link alert-title">{{ a.title or a.alert_id[:16] }}</a></td>
+      <td class="muted">{{ a.rule_name or '—' }}</td>
+      <td>
+        <select class="select select-sm status-select" data-alert-field="status" data-status="{{ a.status }}"
+                data-alert-id="{{ a.alert_id }}" aria-label="Status">
+          {% for val, label in status_choices if val in ('new', 'active', 'closed_tp', 'closed_fp') %}
+          <option value="{{ val }}" {% if a.status == val %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td class="nowrap">{{ a.created_at }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<nav class="pager" aria-label="Pages">
+  {% if pager.prev %}<a class="btn btn-sm" href="{{ pager.prev }}">← Previous</a>{% endif %}
+  <span class="muted">Page {{ current_page }} of {{ pages }}</span>
+  {% if pager.next %}<a class="btn btn-sm" href="{{ pager.next }}">Next →</a>{% endif %}
+</nav>
+{% else %}
+<div class="empty-state">
+  <svg viewBox="0 0 48 48" width="48" height="48"><path d="M24 4a20 20 0 100 40 20 20 0 000-40zM12 24h24" stroke="var(--color-muted)" stroke-width="2"/></svg>
+  <p>No alerts match your filters.</p>
+</div>
+{% endif %}
+<aside id="alert-drawer" class="alert-drawer" hidden aria-label="Alert preview">
+  <div class="drawer-head">
+    <strong id="drawer-title">Alert</strong>
+    <button type="button" class="btn btn-sm" id="drawer-close" aria-label="Close preview">&times;</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+  <!-- Triage agent panel: alerts_drawer.js mounts it for the previewed alert (scope alert). -->
+  <div id="agent-panel" data-agent-scope="alert"></div>
+</aside>
+<script src="/static/alerts.js"></script>
+<script src="/static/alerts_list.js"></script>
+<script src="/static/agent_panel.js"></script>
+<script src="/static/alerts_drawer.js"></script>
+{% endblock %}
+

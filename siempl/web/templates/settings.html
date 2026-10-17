@@ -1,0 +1,298 @@
+<!-- Settings page: AI panel, cost caps, models, agent switches, policy matrix -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Settings</h1>
+  <p class="page-subtitle">Configure siempl</p>
+</div>
+
+<!-- AI Master Switch -->
+<div class="panel">
+  <div class="panel-header" style="justify-content:space-between;align-items:center">
+    <h2 class="panel-title">AI Engine</h2>
+    <label class="switch">
+      <input type="checkbox" {% if ai_enabled %}checked{% endif %}
+             onchange="confirmAI(this)" id="ai-switch" aria-label="Toggle AI">
+      <span class="switch-slider"></span>
+    </label>
+  </div>
+  <div class="panel-body">
+    <div class="metric-row">
+      <div class="metric">
+        <div class="metric-value">{{ "%.4f" | format(usage_today.today_usd) }}</div>
+        <div class="metric-label">USD Today</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ usage_today.today_tokens }}</div>
+        <div class="metric-label">Tokens Today</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ "%.4f" | format(usage_today.total_usd) }}</div>
+        <div class="metric-label">Total Spent</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ "%.2f" | format(ai_total_usd_budget) }}</div>
+        <div class="metric-label">Total Budget</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ "%.2f" | format(ai_total_usd_budget - usage_today.total_usd) }}</div>
+        <div class="metric-label">Remaining</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ key_status }}</div>
+        <div class="metric-label">Key Status</div>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-danger" onclick="triggerKillSwitch()">KILL SWITCH</button>
+    </div>
+    <p class="muted" style="margin-top:8px">AI is OFF by default. Dry-run is the default for agent side effects. Use the kill switch to disable AI + scheduling immediately.</p>
+
+    <h3 class="section-title">OpenRouter API Key</h3>
+    <p class="muted" id="key-state">Status: <strong>{{ key_info.label }}</strong>{% if key_info.file_path %} &middot; file <code>{{ key_info.file_path }}</code>{% endif %}{% if key_info.env_set %} &middot; env var OPENROUTER_API_KEY is set and takes precedence over the file{% endif %}</p>
+    <div class="form-grid">
+      <label class="form-label">New key
+        <input type="password" class="input" id="key-input" autocomplete="off" placeholder="sk-or-v1-..." spellcheck="false">
+      </label>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-primary" onclick="keyAction('save')">Save key</button>
+      <button class="btn" onclick="keyAction('test')">Test key</button>
+      <button class="btn btn-danger" onclick="keyAction('remove')">Remove key</button>
+    </div>
+    <p class="muted" id="key-msg" style="margin-top:6px"></p>
+
+    <h3 class="section-title">Cost Caps</h3>
+    <div class="form-grid">
+      <label class="form-label">Daily USD Cap
+        <input type="number" class="input" value="{{ ai_daily_usd_cap }}" step="0.1" min="0"
+               onchange="saveSetting('ai_daily_usd_cap', parseFloat(this.value))" id="usd-cap">
+      </label>
+      <label class="form-label">Daily Token Cap
+        <input type="number" class="input" value="{{ ai_daily_token_cap }}" step="10000" min="0"
+               onchange="saveSetting('ai_daily_token_cap', parseInt(this.value))" id="token-cap">
+      </label>
+      <label class="form-label">Total USD Budget
+        <input type="number" class="input" value="{{ ai_total_usd_budget }}" step="0.1" min="0"
+               onchange="saveSetting('ai_total_usd_budget', parseFloat(this.value))" id="total-budget">
+      </label>
+    </div>
+
+    <h3 class="section-title">Models</h3>
+    <div class="form-grid">
+      <label class="form-label">Default Model
+        <input type="text" class="input" value="{{ ai_default_model }}"
+               onchange="saveSetting('ai_default_model', this.value)" id="default-model">
+      </label>
+      <label class="form-label">Cheap Model (log-alert agent)
+        <input type="text" class="input" value="{{ ai_cheap_model }}"
+               onchange="saveSetting('ai_cheap_model', this.value)" id="cheap-model">
+      </label>
+    </div>
+
+    <h3 class="section-title">Per-Agent Model Override</h3>
+    {% if agent_models %}
+    <div class="form-grid">
+      {% for agent, model in agent_models.items() %}
+      <label class="form-label">{{ agent }}
+        <select class="select" id="model-override-{{ agent }}" onchange="saveModelOverride('{{ agent }}', this.value)">
+          <option value="" {% if not model %}selected{% endif %}>Default</option>
+          {% for m in model_choices %}<option value="{{ m }}" {% if model == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+          <option value="__custom__">Custom…</option>
+        </select>
+        <input type="text" class="input" id="model-override-custom-{{ agent }}" style="display:none;margin-top:4px" placeholder="model-id" onchange="saveModelOverride('{{ agent }}', this.value)">
+      </label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No agents registered.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Agent Settings -->
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">Agents</h2></div>
+  <div class="panel-body">
+    <div class="switch-list">
+      <label class="switch-row">
+        <span>Dry Run (recommendations only, no side effects)</span>
+        <label class="switch">
+          <input type="checkbox" {% if agents_dry_run %}checked{% endif %}
+                 onchange="toggleSetting('agents_dry_run', this)" aria-label="Toggle dry run">
+          <span class="switch-slider"></span>
+        </label>
+      </label>
+      <label class="switch-row">
+        <span>Agent Scheduling</span>
+        <label class="switch">
+          <input type="checkbox" {% if agent_schedule_enabled %}checked{% endif %}
+                 onchange="toggleSetting('agent_schedule_enabled', this)" aria-label="Toggle schedule">
+          <span class="switch-slider"></span>
+        </label>
+      </label>
+      <label class="switch-row">
+        <span>Remediation Enabled (actions are stubs even when enabled)</span>
+        <label class="switch">
+          <input type="checkbox" {% if remediation_enabled %}checked{% endif %}
+                 onchange="toggleSetting('remediation_enabled', this)" aria-label="Toggle remediation">
+          <span class="switch-slider"></span>
+        </label>
+      </label>
+      <label class="switch-row">
+        <span>Log-Alert Agent</span>
+        <label class="switch">
+          <input type="checkbox" {% if log_alert_agent_enabled %}checked{% endif %}
+                 onchange="toggleSetting('log_alert_agent_enabled', this)" aria-label="Toggle log-alert agent">
+          <span class="switch-slider"></span>
+        </label>
+      </label>
+    </div>
+  </div>
+</div>
+
+<!-- Policy Matrix -->
+<div class="panel">
+  <div class="panel-header"><h2 class="panel-title">Agent Policy Matrix</h2></div>
+  <div class="panel-body">
+    <p class="muted">Controls what agents can do automatically. Most specific scope wins: rule &gt; severity &gt; global.</p>
+    {% if policy_rows %}
+    <div class="table-scroll">
+    <table class="table table-sm">
+      <thead>
+        <tr><th>Agent</th><th>Scope</th><th>Value</th><th>Mode</th><th>Close</th><th>Escalate</th><th>Remediate</th><th>Temp Rules</th></tr>
+      </thead>
+      <tbody>
+      {% for p in policy_rows %}
+      <tr>
+        <td><code>{{ p.agent }}</code></td>
+        <td><span class="pill">{{ p.scope }}</span></td>
+        <td><code>{{ p.scope_value }}</code></td>
+        <td>
+          <select class="select select-sm" onchange="updatePolicy('{{ p.agent }}', '{{ p.scope }}', '{{ p.scope_value }}', this.value)">
+            {% for m in all_modes %}
+            <option value="{{ m }}" {% if p.mode == m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>{% if p.can_close %}✓{% else %}—{% endif %}</td>
+        <td>{% if p.can_escalate %}✓{% else %}—{% endif %}</td>
+        <td>{% if p.can_remediate %}✓{% else %}—{% endif %}</td>
+        <td>{% if p.can_create_temp_rules %}✓{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No policy rows defined. Default is <code>recommend</code> for triage.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- AI confirmation sheet -->
+<div id="ai-confirm-sheet" class="sheet-overlay" style="display:none">
+  <div class="sheet">
+    <h2>Enable AI Engine?</h2>
+    <p>Enabling AI allows agents to call language models via OpenRouter. This <strong>costs money</strong> based on your API plan. To enable:</p>
+    <ol>
+      <li>Set your OpenRouter API key: <code>export OPENROUTER_API_KEY=sk-or-...</code> or place it in the key file</li>
+      <li>Verify the daily cost caps below are acceptable</li>
+      <li>Make sure <code>agents_dry_run</code> is ON for safety</li>
+    </ol>
+    <div class="sheet-actions">
+      <button class="btn" onclick="closeSheet(false)">Cancel</button>
+      <button class="btn btn-primary" onclick="closeSheet(true)">Enable AI</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function confirmAI(el) {
+  if (!el.checked) {
+    saveSetting('ai_enabled', false);
+    return;
+  }
+  document.getElementById('ai-confirm-sheet').style.display = 'flex';
+  el.checked = false;
+}
+function closeSheet(confirmed) {
+  document.getElementById('ai-confirm-sheet').style.display = 'none';
+  if (confirmed) {
+    document.getElementById('ai-switch').checked = true;
+    saveSetting('ai_enabled', true);
+  }
+}
+async function keyAction(kind) {
+  const msg = document.getElementById('key-msg');
+  const input = document.getElementById('key-input');
+  let url = '/api/settings/key', opts = {method: 'POST', headers: {'Content-Type':'application/json'}};
+  if (kind === 'save') { opts.body = JSON.stringify({key: input.value}); }
+  else if (kind === 'test') { url = '/api/settings/key/test'; }
+  else { if (!confirm('Remove the stored key file?')) return; opts = {method: 'DELETE'}; }
+  msg.textContent = 'Working...';
+  try {
+    const r = await fetch(url, opts);
+    const d = await r.json();
+    if (kind === 'save' && d.ok) { input.value = ''; }
+    msg.textContent = d.message || d.error || (d.ok ? 'Done.' : 'Failed.');
+    if (d.label) { document.getElementById('key-state').innerHTML = 'Status: <strong></strong>'; document.getElementById('key-state').firstElementChild.textContent = d.label; }
+  } catch (err) { msg.textContent = 'Request failed: ' + err.message; }
+}
+async function saveSetting(key, value) {
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({[key]: value})
+    });
+    if (!(await r.json()).ok) { alert('Failed to save ' + key); }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function updatePolicy(agent, scope, scopeValue, mode) {
+  try {
+    const r = await fetch('/api/settings/policy', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({agent, scope, scope_value: scopeValue, mode})
+    });
+    if ((await r.json()).ok) {/* updated */} else alert('Failed');
+  } catch(e) { alert('Error: ' + e.message); }
+}
+window.toggleSetting = async function(key, el) {
+  const checked = el.checked;
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({[key]: checked})
+    });
+    const data = await r.json();
+    if (!data.ok) { el.checked = !checked; alert('Failed to update setting'); }
+  } catch(e) { el.checked = !checked; alert('Error: ' + e.message); }
+};
+async function triggerKillSwitch() {
+  if (!confirm('KILL SWITCH: Disable AI and agent scheduling immediately?')) return;
+  try {
+    const r = await fetch('/api/settings/kill-switch', {method:'POST'});
+    const data = await r.json();
+    if (data.ok) { alert('Kill switch activated. AI and scheduling disabled.'); location.reload(); }
+    else alert('Error: ' + (data.error||'unknown'));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function saveModelOverride(agent, value) {
+  if (value === '__custom__') {
+    document.getElementById('model-override-custom-' + agent).style.display = 'block';
+    return;
+  }
+  document.getElementById('model-override-custom-' + agent).style.display = 'none';
+  try {
+    const r = await fetch('/api/agents/' + agent + '/model', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({model: value})
+    });
+    if (!(await r.json()).ok) alert('Failed to save model override');
+  } catch(e) { alert('Error: ' + e.message); }
+}
+</script>
+{% endblock %}

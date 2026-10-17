@@ -1,0 +1,159 @@
+<!-- Full alert page: header, controls, evidence, entities, MITRE, rule, comments, history, agent panel -->
+{% extends "base.html" %}
+{% block content %}
+<div class="alert-detail" id="alert-root" data-alert-id="{{ alert.alert_id }}">
+  <div class="page-header">
+    <a href="/alerts" class="link back-link">← Back to Alerts</a>
+    <h1><span id="alert_number" class="alert-number">#{{ alert.alert_number or '–' }}</span> {{ alert.title or alert.alert_id[:16] }}</h1>
+    <div class="alert-meta">
+      <span class="badge badge-{{ severity_class.get(alert.severity, 'sev-info') }}">{{ alert.severity }}</span>
+      <span class="pill pill-status-{{ alert.status }}">{{ status_label }}</span>
+      <span class="muted">ID: {{ alert.alert_id }}</span>
+    </div>
+  </div>
+
+  <div class="panel alert-controls">
+    <div class="panel-body ad-controls">
+      <label class="form-label" for="status-select">Status</label>
+      <select id="status-select" class="select" data-field="status">
+        {% for value, label in status_choices %}
+        <option value="{{ value }}" {% if value == alert.status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label class="form-label" for="severity-select">Severity</label>
+      <select id="severity-select" class="select" data-field="severity">
+        {% for value, label in severity_choices %}
+        <option value="{{ value }}" {% if value == alert.severity %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label class="form-label" for="owner-input">Owner</label>
+      <span class="ad-owner">
+        <input id="owner-input" class="input input-sm" type="text" maxlength="80"
+               value="{{ alert.owner or '' }}" placeholder="Unassigned">
+        <button id="owner-save" class="btn btn-sm" type="button">Save owner</button>
+      </span>
+      <span id="alert-status-msg" class="muted ad-message" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <div class="detail-main">
+      {% if alert.description %}
+      <div class="panel">
+        <div class="panel-header"><h2 class="panel-title">Description</h2></div>
+        <div class="panel-body"><p>{{ alert.description }}</p></div>
+      </div>
+      {% endif %}
+
+      <div class="panel">
+        <div class="panel-header"><h2 class="panel-title">Evidence ({{ evidence.total }} rows)</h2></div>
+        <div class="panel-body">
+          {% if evidence.columns %}
+          <div class="table-scroll">
+            <table class="table table-sm" id="evidence-table">
+              <thead><tr>{% for c in evidence.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+              <tbody>
+              {% for row in evidence.rows %}
+              <tr>{% for cell in row %}<td>{{ cell if cell is not none else '' }}</td>{% endfor %}</tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="muted">No evidence rows recorded.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><h2 class="panel-title">History</h2></div>
+        <div class="panel-body">
+          {% if history %}
+          <div class="table-scroll">
+            <table class="table table-sm" id="history-table">
+              <thead><tr><th>When</th><th>Change</th><th>From</th><th>To</th><th>By</th></tr></thead>
+              <tbody>
+              {% for h in history %}
+              <tr>
+                <td class="nowrap">{{ h.when }}</td>
+                <td>{{ h.field }}</td>
+                <td>{{ h.before if h.before is not none else '–' }}</td>
+                <td>{{ h.after if h.after is not none else '–' }}</td>
+                <td>{{ h.actor }}</td>
+              </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="muted">No status, severity or owner changes yet.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-sidebar">
+      <div class="panel">
+        <div class="panel-header"><h2 class="panel-title">Rule</h2></div>
+        <div class="panel-body">
+          {% if rule %}
+          <p><a href="/rules/{{ rule.rule_id }}" class="link" id="rule-link">{{ rule.name or rule.rule_id }}</a></p>
+          {% if rule.description %}<p class="muted">{{ rule.description | truncate(300) }}</p>{% endif %}
+          {% else %}
+          <p class="muted">Rule not found.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><h2 class="panel-title">Entities</h2></div>
+        <div class="panel-body">
+          {% if entities %}
+          <div class="chip-list" id="entity-list">
+            {% for ent in entities %}
+            <a href="{{ ent.href }}" class="chip">{{ ent.label }}</a>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="muted">No entities.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><h2 class="panel-title">MITRE ATT&amp;CK</h2></div>
+        <div class="panel-body" id="mitre-block">
+          {% if mitre_tactics %}<p><span class="muted">Tactics:</span> {{ mitre_tactics | join(', ') }}</p>{% endif %}
+          {% if mitre_techniques %}<p><span class="muted">Techniques:</span> {{ mitre_techniques | join(', ') }}</p>{% endif %}
+          {% if not mitre_tactics and not mitre_techniques %}<p class="muted">No MITRE mapping.</p>{% endif %}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><h2 class="panel-title">Comments ({{ comments | length }})</h2></div>
+        <div class="panel-body">
+          <form id="comment-form" class="ad-comment-form">
+            <textarea id="comment-body" class="input" rows="3" maxlength="4000" placeholder="Add a comment…"></textarea>
+            <button id="comment-submit" class="btn btn-primary btn-sm" type="submit">Post comment</button>
+            <span id="comment-msg" class="muted ad-message" role="status" aria-live="polite"></span>
+          </form>
+          {% for c in comments %}
+          <div class="comment">
+            <div class="comment-meta"><strong>{{ c.author }}</strong> · {{ c.ts }}</div>
+            <div class="comment-body">{{ c.body }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Triage agent panel (scope alert, target = this alert). -->
+  <div id="agent-panel" data-agent-scope="alert" data-agent-target="{{ alert.alert_id }}"></div>
+</div>
+<script src="/static/agent_panel.js"></script>
+<script>AgentPanel.mountAll(document);</script>
+<script src="/static/alert_detail.js"></script>
+{% endblock %}

@@ -1,0 +1,104 @@
+<!-- Entities list page -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Entities</h1>
+  <p class="page-subtitle">{{ display_total }} of {{ total }} entities</p>
+</div>
+
+<div class="filter-bar">
+  <select class="select" onchange="applyFilter('etype',this.value)">
+    <option value="">All types</option>
+    {% for t in entity_types %}
+    <option value="{{ t }}" {% if etype_filter == t %}selected{% endif %}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <select class="select" onchange="applyFilter('table_filter',this.value)">
+    <option value="">All tables</option>
+    {% for tn in data_tables %}
+    <option value="{{ tn }}" {% if table_filter == tn %}selected{% endif %}>{{ tn }}</option>
+    {% endfor %}
+  </select>
+  <select class="select" onchange="applyFilter('has_alerts',this.value)">
+    <option value="">Alerts: any</option>
+    <option value="1" {% if has_alerts_filter == '1' %}selected{% endif %}>Has alerts</option>
+    <option value="0" {% if has_alerts_filter == '0' %}selected{% endif %}>No alerts</option>
+  </select>
+  <select class="select" onchange="applyFilter('sort',this.value)">
+    <option value="alert_count DESC" {% if sort == 'alert_count DESC' %}selected{% endif %}>Alerts ↓</option>
+    <option value="alert_count ASC" {% if sort == 'alert_count ASC' %}selected{% endif %}>Alerts ↑</option>
+    <option value="event_count DESC" {% if sort == 'event_count DESC' %}selected{% endif %}>Events ↓</option>
+    <option value="event_count ASC" {% if sort == 'event_count ASC' %}selected{% endif %}>Events ↑</option>
+    <option value="reputation DESC" {% if sort == 'reputation DESC' %}selected{% endif %}>Rep ↓</option>
+    <option value="reputation ASC" {% if sort == 'reputation ASC' %}selected{% endif %}>Rep ↑</option>
+    <option value="last_seen DESC" {% if sort == 'last_seen DESC' %}selected{% endif %}>Last seen ↓</option>
+    <option value="last_seen ASC" {% if sort == 'last_seen ASC' %}selected{% endif %}>Last seen ↑</option>
+    <option value="value ASC" {% if sort == 'value ASC' %}selected{% endif %}>Value A→Z</option>
+    <option value="value DESC" {% if sort == 'value DESC' %}selected{% endif %}>Value Z→A</option>
+  </select>
+  <input type="search" class="input" placeholder="Search by value…" value="{{ q_filter or '' }}"
+         onkeydown="if(event.key==='Enter')applyFilter('q',this.value)">
+  <a href="/entities" class="btn btn-sm">Clear</a>
+</div>
+
+{% if entities %}
+<div class="table-scroll">
+<table class="table">
+  <thead>
+    <tr>
+      <th>Value</th>
+      <th>Type</th>
+      <th>Reputation</th>
+      <th>Last Detected</th>
+      <th>Tables</th>
+      <th>Alerts</th>
+      <th>Events</th>
+      <th>Watch</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for e in entities %}
+  <tr>
+    <td><a href="/entities/{{ e.entity_id | urlencode }}" class="link">{{ e.value }}</a></td>
+    <td><span class="pill">{{ e.type }}</span></td>
+    <td>
+      <div class="reputation-bar">
+        <div class="reputation-fill {% if e.reputation > 70 %}rep-high{% elif e.reputation > 40 %}rep-med{% else %}rep-low{% endif %}" style="width:{{ e.reputation }}%"></div>
+        <span class="reputation-label">{{ "%.0f" | format(e.reputation) }}</span>
+      </div>
+    </td>
+    <td>
+      <span title="{{ e.last_seen or '' }}">{{ e._reltime }}</span>
+    </td>
+    <td>
+      {% for t in e._tables %}
+        <span class="pill pill-sm">{{ t }}</span>
+      {% else %}—{% endfor %}
+    </td>
+    <td>
+      {% if e._alerts %}
+        <a href="/alerts" class="link">{{ e._alerts | length }}</a>
+      {% else %}0{% endif %}
+    </td>
+    <td>{{ e.event_count }}</td>
+    <td>{% if e.watch %}🔔{% else %}—{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state">
+  <svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="20" fill="none" stroke="var(--color-muted)" stroke-width="1.5"/><path d="M16 16h16v16H16z" fill="none" stroke="var(--color-muted)" stroke-width="1.5"/></svg>
+  <p>No entities found. Entities are extracted automatically as events are ingested.</p>
+</div>
+{% endif %}
+
+<script>
+function applyFilter(key, value) {
+  const url = new URL(location.href);
+  if (value) { url.searchParams.set(key, value); } else { url.searchParams.delete(key); }
+  location.href = url.toString();
+}
+</script>
+{% endblock %}

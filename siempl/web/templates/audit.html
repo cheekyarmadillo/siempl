@@ -1,0 +1,74 @@
+<!-- Audit trail page -->
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Audit Trail</h1>
+  <p class="page-subtitle">{{ rows | length }} entries</p>
+</div>
+
+<div class="filter-bar">
+  <select class="select" id="filter-actor" onchange="applyFilters()">
+    <option value="">All actor types</option>
+    {% for a in actor_types %}
+    <option value="{{ a }}" {% if actor_type_filter == a %}selected{% endif %}>{{ a }}</option>
+    {% endfor %}
+  </select>
+  <select class="select" id="filter-action" onchange="applyFilters()">
+    <option value="">All actions</option>
+    {% for a in actions %}
+    <option value="{{ a }}" {% if action_filter == a %}selected{% endif %}>{{ a }}</option>
+    {% endfor %}
+  </select>
+  <select class="select" id="filter-target" onchange="applyFilters()">
+    <option value="">All targets</option>
+    {% for t in target_types %}
+    <option value="{{ t }}" {% if target_type_filter == t %}selected{% endif %}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" class="input input-sm" placeholder="Search…" value="{{ q_filter }}" id="filter-q" onchange="applyFilters()">
+  <a href="/audit" class="btn btn-sm">Clear</a>
+</div>
+
+{% if rows %}
+<div class="table-scroll">
+<table class="table">
+  <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Details</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+  <tr>
+    <td class="nowrap">{{ row.TimeGenerated }}</td>
+    <td><span class="pill">{{ row.Actor }}</span></td>
+    <td>{{ row.Action }}</td>
+    <td>{% if row.TargetType %}{{ row.TargetType }}{% if row.TargetId %}: {{ row.TargetId }}{% endif %}{% else %}—{% endif %}</td>
+    <td><span class="pill pill-status-{{ row.Outcome }}">{{ row.Outcome }}</span></td>
+    <td class="muted">{{ row.Message | truncate(80) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state">
+  <p>No audit entries match your filters.</p>
+</div>
+{% endif %}
+
+<div class="btn-row" style="margin-top:12px">
+  <a href="/logs" class="btn btn-sm">Open in Logs</a>
+</div>
+
+<script>
+function applyFilters() {
+  const actor = document.getElementById('filter-actor').value;
+  const action = document.getElementById('filter-action').value;
+  const target = document.getElementById('filter-target').value;
+  const q = document.getElementById('filter-q').value;
+  const params = new URLSearchParams();
+  if (actor) params.set('actor_type', actor);
+  if (action) params.set('action', action);
+  if (target) params.set('target_type', target);
+  if (q) params.set('q', q);
+  location.href = '/audit?' + params.toString();
+}
+</script>
+{% endblock %}

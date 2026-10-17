@@ -1,0 +1,35 @@
+<!-- Alerts charts row. Included by alerts.html and also returned alone by GET /alerts/fragments/charts,
+     so alerts.js can swap in fresh counts after a status or severity change without a page reload. -->
+<section id="alert-charts" class="alert-charts">
+  <div class="panel chart-card">
+    <div class="panel-header">
+      <h2 class="panel-title">Open alerts by severity</h2>
+      <span class="muted">{{ open_total }} open</span>
+    </div>
+    <div class="panel-body chart-body">
+      {{ pie_svg }}
+      <ul class="chart-legend">
+        {% for item in pie_legend %}
+        <li>
+          <a href="{{ item.href }}" class="legend-item">
+            <span class="legend-swatch" style="background: {{ item.color }}"></span>
+            <span>{{ item.name }}</span>
+            <strong>{{ item.value }}</strong>
+            <span class="muted">{{ item.percent }}%</span>
+          </a>
+        </li>
+        {% else %}
+        <li class="muted">No open alerts</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="panel chart-card">
+    <div class="panel-header">
+      <h2 class="panel-title">Alerts by status</h2>
+    </div>
+    <div class="panel-body chart-body chart-body-bars">
+      {{ status_svg }}
+    </div>
+  </div>
+</section>
